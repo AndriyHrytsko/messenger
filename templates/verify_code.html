@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Підтвердження коду</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <h2>Підтвердження коду</h2>
+    <p>Введіть 6-значний код, який надіслано на вашу електронну пошту.</p>
+    <form method="POST" action="/verify_code">
+      <input type="text" name="code" placeholder="Введіть код" required autocomplete="off">
+      <button type="submit">Підтвердити</button>
+    </form>
+  </div>
+  <script src="/script.js"></script>
+</body>
+</html>

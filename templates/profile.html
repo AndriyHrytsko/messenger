@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Профіль</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="profile-container">
+        <h2>Ваш профіль</h2>
+        <form id="profile-form" method="POST" action="/update_profile">
+            <label for="username">Ім'я користувача</label>
+            <input type="text" id="username" name="username" value="{{ user[0] if user else '' }}" required>
+
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" value="{{ user[1] if user else '' }}" required>
+
+            <label for="phone">Телефон</label>
+            <input type="text" id="phone" name="phone" value="{{ user[2] if user else '' }}" required>
+
+            <button type="submit" class="save-button">Зберегти зміни</button>
+        </form>
+
+        <div class="two-factor-status">
+            {% if user.two_factor_enabled %}
+                <p>Двофакторна автентифікація: <strong>Увімкнена</strong></p>
+                <a href="{{ url_for('disable_two_factor') }}" class="action-button">Вимкнути 2FA</a>
+            {% else %}
+                <p>Двофакторна автентифікація: <strong>Вимкнена</strong></p>
+                <a href="{{ url_for('enable_two_factor') }}" class="action-button">Увімкнути 2FA</a>
+            {% endif %}
+        </div>
+
+        <button onclick="goBack()" class="back-button">Повернутись до месенджера</button>
+    </div>
+
+    <script>
+        function goBack() {
+            window.location.href = "/messenger";
+        }
+    </script>
+</body>
+</html>

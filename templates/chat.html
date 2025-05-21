@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Чат</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <h1>Чат з {{ contact }}</h1>
+  <form action="{{ url_for('send_message') }}" method="POST">
+    <input type="hidden" name="receiver" value="{{ contact }}">
+    <textarea name="message" placeholder="Введіть повідомлення" required></textarea>
+    <button type="submit">Відправити</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Двофакторна автентифікація</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <h1>Двофакторна автентифікація</h1>
+    <p>Введіть код, який був відправлений на ваш номер телефону.</p>
+    <form action="/two_factor" method="POST">
+      <input type="text" name="code" placeholder="Введіть код" required>
+      <button type="submit">Підтвердити</button>
+    </form>
+    <!-- Кнопка для повторного надсилання коду з таймером -->
+    <button id="resend-btn" disabled>Надіслати знову (<span id="timer">60</span>)</button>
+    <!-- Кнопка для повернення -->
+    <button onclick="window.history.back()">Назад</button>
+  </div>
+
+  <script>
+    // Таймер 60 секунд для кнопки "Надіслати знову"
+    const resendBtn = document.getElementById('resend-btn');
+    const timerSpan = document.getElementById('timer');
+    let secondsLeft = 60;
+
+    function updateTimer() {
+      secondsLeft--;
+      timerSpan.textContent = secondsLeft;
+      if (secondsLeft <= 0) {
+        clearInterval(timerInterval);
+        resendBtn.disabled = false;
+        timerSpan.textContent = "0";
+      }
+    }
+    let timerInterval = setInterval(updateTimer, 1000);
+
+    resendBtn.addEventListener('click', function() {
+      // Викликаємо маршрут для повторної відправки коду
+      fetch('/resend_two_factor', { method: 'POST' })
+        .then(response => {
+          if (response.ok) {
+            alert("Код відправлено знову");
+            // Перезавантажуємо таймер
+            resendBtn.disabled = true;
+            secondsLeft = 60;
+            timerSpan.textContent = secondsLeft;
+            timerInterval = setInterval(updateTimer, 1000);
+          } else {
+            alert("Помилка при повторному надсиланні коду");
+          }
+        })
+        .catch(error => {
+          console.error("Помилка:", error);
+        });
+    });
+  </script>
+</body>
+</html>

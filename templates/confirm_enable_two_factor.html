@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Підтвердіть 2FA</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <h1>Підтвердіть двофакторну автентифікацію</h1>
+    <p>Введіть код, який був відправлений на ваш номер телефону.</p>
+    <form method="POST" action="/confirm_enable_two_factor">
+      <input type="text" name="code" placeholder="Введіть код" required>
+      <button type="submit">Підтвердити</button>
+    </form>
+    <hr>
+
+    <p>Не отримали код? Надішліть повторно:</p>
+    <button id="resend-btn" disabled> Надіслати знову (<span id="timer">60</span>)</button>
+  </div>
+  <script>
+    const resendBtn = document.getElementById("resend-btn");
+    const timerSpan = document.getElementById("timer");
+    let secondsLeft = 60;
+    // Стартуємо відлік одразу
+    const updateTimer = () => {
+      secondsLeft--;
+      timerSpan.textContent = secondsLeft;
+      if (secondsLeft <= 0) {
+        clearInterval(timerInterval);
+        resendBtn.disabled = false;
+        resendBtn.textContent = "Надіслати знову";
+      }
+    };
+    let timerInterval = setInterval(updateTimer, 1000);
+
+    resendBtn.addEventListener("click", async () => {
+      resendBtn.disabled = true;
+      resendBtn.textContent = "Надсилання...";
+      try {
+        // Викликаємо той самий маршрут, що й при вперше
+        const res = await fetch("/enable_two_factor", { method: "POST" });
+        if (res.ok) {
+          // скидаємо таймер
+          secondsLeft = 60;
+          timerSpan.textContent = secondsLeft;
+          resendBtn.innerHTML = `Надіслати знову (<span id="timer">60</span>)`;
+          timerInterval = setInterval(updateTimer, 1000);
+        } else {
+          alert("❌ Не вдалося надіслати код повторно.");
+          resendBtn.disabled = false;
+        }
+      } catch {
+        alert("❌ Помилка при надсиланні коду.");
+        resendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

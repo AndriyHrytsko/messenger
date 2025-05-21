@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Месенджер</title>
+  <!-- Ваші стилі без ?v=, integrity і т.д. -->
+  <link rel="stylesheet" href="/static/styles.css" />
+  <!-- Socket.IO -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js" defer></script>
+  <!-- Головний скрипт -->
+  <script src="/static/scriptic.js" defer></script>
+  <!-- Google Fonts без integrity -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app" data-user="{{ session['user'] }}" data-user-id="{{ session['user_id'] }}">
+    <header>
+      <div class="header-left"><h1>Месенджер</h1></div>
+      <div class="header-right">
+        <a href="/profile"><div class="avatar">{{ session['user'][0] }}</div></a>
+        <form id="logout-form" action="/logout" method="POST">
+          <button type="submit" id="logoutButton">Вийти</button>
+        </form>
+      </div>
+    </header>
+
+    <div class="main-container">
+      <!-- Ліва панель: контакти -->
+      <aside id="users-list">
+        <h2>Контакти</h2>
+        <ul id="contacts"></ul>
+        <form id="add-friend-form">
+          <input type="text" id="friend-username" placeholder="Введіть ім’я користувача" required />
+          <button type="submit">Додати</button>
+        </form>
+      </aside>
+
+      <!-- Права панель: чат -->
+      <section id="chat-window" class="chat-window hidden">
+        <div class="chat-header">
+          <h2>Чат з: <span id="chat-username"></span></h2>
+        </div>
+        <div id="fingerprint" class="fingerprint"></div>
+        <div id="messages" class="chat-messages"></div>
+        <form id="message-form" class="chat-form">
+          <input type="hidden" id="reply-to" name="reply_to" value="" />
+          <input type="text" id="message-input" placeholder="Введіть повідомлення" required />
+          <input type="file" id="media-input" accept="image/*,application/pdf" style="display:none" />
+          <button type="button" id="media-button">Прикріпити</button>
+          <button type="submit">Відправити</button>
+        </form>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

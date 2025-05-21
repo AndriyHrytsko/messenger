@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Увімкнути 2FA</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <h1>Увімкнути двофакторну автентифікацію</h1>
+    <p>Натисніть кнопку нижче, щоб отримати код підтвердження на ваш номер телефону.</p>
+
+    <form method="POST" action="/enable_two_factor">
+      <button type="submit">Увімкнути 2FA</button>
+    </form>
+  </div>
+</body>
+</html>
