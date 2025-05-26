@@ -154,20 +154,14 @@ class DatabaseManager:
 
     def get_chat_history(self, user1, user2):
         """
-        Повертає список повідомлень між user1 та user2, включно з полями:
-         - sender_id, receiver_id
-         - content_for_sender, iv_for_sender
-         - content_for_receiver, iv_for_receiver
-         - media_type, media_url, reply_to, status, timestamp
-         - sender_username, receiver_username
+        Повертає список повідомлень між user1 та user2,
+        включно з полями для тексту і медіа.
         """
-        # 1. Знаходимо внутрішні ID обох користувачів
         u1 = self.get_user_id(user1)
         u2 = self.get_user_id(user2)
         if u1 is None or u2 is None:
             return []
 
-        # 2. Витягуємо історію з JOIN на users для отримання імен
         with self.connect() as conn:
             c = conn.cursor()
             c.execute("""
@@ -180,7 +174,10 @@ class DatabaseManager:
                   m.content_for_receiver,
                   m.iv_for_receiver,
                   m.media_type,
-                  m.media_url,
+                  m.media_content_for_sender,
+                  m.iv_media_for_sender,
+                  m.media_content_for_receiver,
+                  m.iv_media_for_receiver,
                   m.reply_to,
                   m.status,
                   m.timestamp,
@@ -195,36 +192,41 @@ class DatabaseManager:
             """, (u1, u2, u2, u1))
             rows = c.fetchall()
 
-        # 3. Формуємо список словників з усіма полями
         messages = []
         for row in rows:
             messages.append({
-                "id":                row[0],
-                "sender_id":         row[1],
-                "receiver_id":       row[2],
-                "content_for_sender":   row[3],
-                "iv_for_sender":        row[4],
+                "id": row[0],
+                "sender_id": row[1],
+                "receiver_id": row[2],
+                "content_for_sender": row[3],
+                "iv_for_sender": row[4],
                 "content_for_receiver": row[5],
-                "iv_for_receiver":      row[6],
-                "media_type":        row[7],
-                "media_url":         row[8],
-                "reply_to":          row[9],
-                "status":            row[10],
-                "timestamp":         row[11],
-                "sender_username":   row[12],
-                "receiver_username": row[13],
+                "iv_for_receiver": row[6],
+                "media_type": row[7],
+                "media_content_for_sender": row[8],
+                "iv_media_for_sender": row[9],
+                "media_content_for_receiver": row[10],
+                "iv_media_for_receiver": row[11],
+                "reply_to": row[12],
+                "status": row[13],
+                "timestamp": row[14],
+                "sender_username": row[15],
+                "receiver_username": row[16],
             })
-
         return messages
 
     def send_message(self, sender, receiver,
                      content_for_sender, iv_for_sender,
                      content_for_receiver, iv_for_receiver,
-                     media_type=None, media_url=None, reply_to=None):
+                     media_type=None,
+                     media_content_for_sender=None, iv_media_for_sender=None,
+                     media_content_for_receiver=None, iv_media_for_receiver=None,
+                     reply_to=None):
         sid = self.get_user_id(sender)
         rid = self.get_user_id(receiver)
         if sid is None or rid is None:
             return "User not found"
+
         with self.connect() as conn:
             c = conn.cursor()
             c.execute("""
@@ -232,15 +234,21 @@ class DatabaseManager:
                     sender_id, receiver_id,
                     content_for_sender, iv_for_sender,
                     content_for_receiver, iv_for_receiver,
-                    media_type, media_url, reply_to,
+                    media_type,
+                    media_content_for_sender, iv_media_for_sender,
+                    media_content_for_receiver, iv_media_for_receiver,
+                    reply_to,
                     status, timestamp
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', datetime('now'))
             """, (
                 sid, rid,
                 content_for_sender, iv_for_sender,
                 content_for_receiver, iv_for_receiver,
-                media_type, media_url, reply_to
+                media_type,
+                media_content_for_sender, iv_media_for_sender,
+                media_content_for_receiver, iv_media_for_receiver,
+                reply_to
             ))
             conn.commit()
         return "OK"

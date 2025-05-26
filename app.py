@@ -169,7 +169,7 @@ def login():
             send_sms(user['phone'], f"Ваш код: {code}")
             return redirect(url_for('two_factor'))
 
-        session['user']    = username
+        session['user'] = username
         session['user_id'] = user['id']
         return redirect(url_for('messenger'))
 
@@ -233,8 +233,8 @@ def register():
     if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
         flash(("error", "Invalid email format."))
         return redirect(url_for('register'))
-    if not re.match(r'^\+380\d{9}$', phone):
-        flash(("error", "Phone must be in format +380XXXXXXXXX."))
+    if not re.match(r'^\+?\d{7,15}$', phone):
+        flash(("error", "Номер телефону має бути від 7 до 15 цифр, можна з + на початку."))
         return redirect(url_for('register'))
     if not re.match(r'^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{8,}$', password):
         flash(("error", "Password must be at least 8 characters long and contain uppercase, lowercase, and a number."))
@@ -492,40 +492,62 @@ def api_send_message():
         return jsonify(error="Unauthorized"), 401
 
     data = request.get_json()
-    receiver = clean(data.get('receiver',''), strip=True)
+    receiver = clean(data.get('receiver', ''), strip=True)
     if not receiver:
         return jsonify(error="Receiver required"), 400
 
-    sender_id   = session['user_id']
+    sender = session['user']
+    sender_id = session['user_id']
     receiver_id = db_manager.get_user_id(receiver)
     if not receiver_id:
         return jsonify(error="Receiver not found"), 404
 
-    # тут ваша логіка вставки (двохразове шифрування) …
+    # Підготовка полів для тексту
+    content_for_sender = data['content_for_sender']
+    iv_for_sender = data['iv_for_sender']
+    content_for_receiver = data['content_for_receiver']
+    iv_for_receiver = data['iv_for_receiver']
+
+    # Нові поля для медіа (або None)
+    media_type = data.get('media_type')
+    media_content_for_sender = data.get('media_content_for_sender')
+    iv_media_for_sender = data.get('iv_media_for_sender')
+    media_content_for_receiver = data.get('media_content_for_receiver')
+    iv_media_for_receiver = data.get('iv_media_for_receiver')
+    reply_to = data.get('reply_to')
+
+    # Збереження в БД
     db_manager.send_message(
-        sender=session['user'],  # або ви можете передати username
+        sender=sender,
         receiver=receiver,
-        content_for_sender=data['content_for_sender'],
-        iv_for_sender=data['iv_for_sender'],
-        content_for_receiver=data['content_for_receiver'],
-        iv_for_receiver=data['iv_for_receiver'],
-        media_type=data.get('media_type'),
-        media_url=data.get('media_url'),
-        reply_to=data.get('reply_to')
+        content_for_sender=content_for_sender,
+        iv_for_sender=iv_for_sender,
+        content_for_receiver=content_for_receiver,
+        iv_for_receiver=iv_for_receiver,
+        media_type=media_type,
+        media_content_for_sender=media_content_for_sender,
+        iv_media_for_sender=iv_media_for_sender,
+        media_content_for_receiver=media_content_for_receiver,
+        iv_media_for_receiver=iv_media_for_receiver,
+        reply_to=reply_to
     )
 
-    # Визначаємо назву кімнати з обох юзернеймів у відсортованому порядку
-    room = "_".join(sorted([session['user'], receiver]))
-    # Відправляємо всім клієнтам у цій кімнаті
+    # Реальна-тайм емісія через SocketIO
+    room = "_".join(sorted([sender, receiver]))
     socketio.emit('new_message', {
-        'sender': session['user'],
+        'sender': sender,
         'receiver': receiver,
-        'content': data['content_for_receiver'],
-        'iv': data['iv_for_receiver'],
-        'media_url': data.get('media_url')
+        'content': content_for_receiver,
+        'iv': iv_for_receiver,
+        'media_type': media_type,
+        'media_content': media_content_for_receiver,
+        'iv_media': iv_media_for_receiver,
+        'reply_to': reply_to,
+        'timestamp': datetime.utcnow().isoformat()
     }, room=room)
 
     return jsonify(status="ok"), 200
+
 
 
 @socketio.on('connect')

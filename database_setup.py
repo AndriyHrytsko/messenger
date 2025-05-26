@@ -36,8 +36,12 @@ def create_tables(db_name="messenger.db"):
                 iv_for_sender      TEXT,  -- IV для розшифрування для себе
                 content_for_receiver TEXT, -- ciphertext для одержувача
                 iv_for_receiver      TEXT, -- IV для розшифрування для друга
-                media_type  TEXT,
-                media_url   TEXT,
+                -- Поля для медіа
+                media_type TEXT,                    -- MIME-тип, напр. 'image/png' або 'application/pdf'
+                media_content_for_sender TEXT,      -- base64 зашифровані дані для відправника
+                iv_media_for_sender TEXT,
+                media_content_for_receiver TEXT,    -- base64 зашифровані дані для отримувача
+                iv_media_for_receiver TEXT,
                 reply_to    INTEGER,
                 status      TEXT DEFAULT 'sent',
                 timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,

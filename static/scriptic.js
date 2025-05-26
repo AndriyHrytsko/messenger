@@ -12,8 +12,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     return new Promise((res, rej) => {
       const req = indexedDB.open(DB_NAME, 1);
       req.onupgradeneeded = e => e.target.result.createObjectStore("keys");
-      req.onsuccess  = e => res(e.target.result);
-      req.onerror    = e => rej(e.target.error);
+      req.onsuccess = e => res(e.target.result);
+      req.onerror = e => rej(e.target.error);
     });
   }
   async function getKey(name) {
@@ -142,7 +142,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     const { data: { public_key: theirJwk } } = await resp.json();
 
-    // Прибираємо key_ops, щоб importKey не конфліктував з JWK.key_ops
+    // Прибираємо key_ops, щоб importKey не конфліктував з JWK.key_ops§
     const { key_ops, ...jwkClean } = theirJwk;
 
     // Імпортуємо публічний ключ без жодних операцій
@@ -151,7 +151,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       jwkClean,
       { name: "ECDH", namedCurve: "P-256" },
       false,
-      []      // ← пустий масив, аби не порушувати JWK.key_ops
+      []
     );
 
     // Генеруємо спільний ключ AES-GCM
@@ -164,8 +164,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     );
 
     // 3) Експортуємо raw-ключ та зберігаємо в IndexedDB як Uint8Array
-    const rawKey   = await crypto.subtle.exportKey("raw", sharedKey);
-    const rawBytes = new Uint8Array(rawKey);
+    const rawKey= await crypto.subtle.exportKey("raw", sharedKey);
+    const rawBytes= new Uint8Array(rawKey);
     await setKey(cacheName, rawBytes);
 
     return sharedKey;
@@ -198,6 +198,32 @@ document.addEventListener("DOMContentLoaded", async () => {
       data
     );
     return new TextDecoder().decode(decrypted);
+  }
+
+    // encryptArrayBuffer: шифрує ArrayBuffer → { iv, data }
+  async function encryptArrayBuffer(buffer, key) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      buffer
+    );
+    return {
+      iv: btoa(String.fromCharCode(...iv)),
+      data: btoa(String.fromCharCode(...new Uint8Array(encrypted)))
+    };
+  }
+
+  // decryptToBlob: дешифрує в Blob для відображення/завантаження
+  async function decryptToBlob(payload, key, type) {
+    const iv   = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
+    const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      data
+    );
+    return new Blob([decrypted], { type });
   }
 
 
@@ -356,11 +382,32 @@ document.addEventListener("DOMContentLoaded", async () => {
         }:</strong> ${escapeHTML(content)}`;
 
         // Малюємо медіа, якщо є
-        if (msg.media_url && msg.media_url !== "no_iv_for_media") {
-          const img = document.createElement("img");
-          img.src = msg.media_url;
-          img.style.maxWidth = "200px";
-          div.appendChild(img);
+        if (msg.media_content_for_receiver && msg.iv_media_for_receiver) {
+          try {
+            const blob = await decryptToBlob(
+              {
+                iv:   msg.iv_media_for_receiver,
+                data: msg.media_content_for_receiver
+              },
+              sharedKey,
+              msg.media_type
+            );
+            const url = URL.createObjectURL(blob);
+            if (msg.media_type.startsWith("image/")) {
+              const img = document.createElement("img");
+              img.src = url;
+              img.style.maxWidth = "200px";
+              div.appendChild(img);
+            } else {
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${msg.id}`;
+              a.textContent = "Завантажити файл";
+              div.appendChild(a);
+            }
+          } catch (err) {
+            console.warn("Помилка дешифрування медіа:", err);
+          }
         }
 
         messagesDiv.appendChild(div);
@@ -378,77 +425,146 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // ===== Динамічна required-валидація =====
+  const messageInput = document.getElementById("message-input");
+  const mediaInput   = document.getElementById("media-input");
+
+  // Якщо обрали файл — текст уже не required, якщо прибрали файл — знову вмикаємо required
+  mediaInput.addEventListener("change", () => {
+    messageInput.required = mediaInput.files.length === 0;
+  });
+
 
   // ===== Надсилання повідомлень =====
   const messageForm = document.getElementById("message-form");
   if (messageForm) {
     messageForm.addEventListener("submit", async e => {
       e.preventDefault();
-      const input = document.getElementById("message-input");
+
+      // Елементи форми
+      const input      = document.getElementById("message-input");
       const replyInput = document.getElementById("reply-to");
-      const receiver = document.getElementById("chat-username").textContent;
-
-      if (!receiver) { alert("❌ Виберіть контакт"); return; }
-      if (window.mitmAlert) { alert("❌ Зв’язок небезпечний"); return; }
-
-      const content = input.value.trim();
       const mediaInput = document.getElementById("media-input");
-      let media_url = null, media_type = null;
-      if (mediaInput.files[0]) {
-        media_url = await fileToBase64(mediaInput.files[0]);
-        media_type = mediaInput.files[0].type.startsWith("image/") ? "image" : "file";
-      }
+      const receiver   = document.getElementById("chat-username").textContent;
+      const file       = mediaInput.files[0];
+      const content    = input.value.trim();
 
-      let payload = { receiver, reply_to: replyInput.value || null };
-      if (!media_url) {
-        const sharedKey = await getSharedKey(receiver);
-        console.log("🔑 Payload:", payload, "\nKey:", sharedKey);
-        const encSelf = await encrypt(content, sharedKey);
-        const encRec  = await encrypt(content, sharedKey);
-        payload = {
-          ...payload,
-          content_for_sender: encSelf.data,
-          iv_for_sender: encSelf.iv,
-          content_for_receiver: encRec.data,
-          iv_for_receiver: encRec.iv,
-          media_type: null,
-          media_url: null
-        };
-      } else {
-        payload = { ...payload, iv: "no_iv_for_media", media_type, media_url };
+      // Перевірки: має бути хоча б текст або файл
+      if (!content && !file) {
+        alert("❌ Введіть текст або виберіть файл для відправки");
+        return;
+      }
+      if (!receiver) {
+        alert("❌ Виберіть контакт");
+        return;
+      }
+      if (window.mitmAlert) {
+        alert("❌ Зв’язок небезпечний");
+        return;
       }
 
       try {
+        // 1) Отримуємо спільний ключ
+        const sharedKey = await getSharedKey(receiver);
+
+        // 2) Формуємо payload
+        let payload = { receiver, reply_to: replyInput.value || null };
+
+        // — текст (якщо є)
+        if (content) {
+          const encSelf = await encrypt(content, sharedKey);
+          const encRec  = await encrypt(content, sharedKey);
+          payload.content_for_sender = encSelf.data;
+          payload.iv_for_sender = encSelf.iv;
+          payload.content_for_receiver = encRec.data;
+          payload.iv_for_receiver = encRec.iv;
+        } else {
+          payload.content_for_sender = null;
+          payload.iv_for_sender  = null;
+          payload.content_for_receiver = null;
+          payload.iv_for_receiver = null;
+        }
+
+        // — файл (якщо є)
+        if (file) {
+          const buf = await file.arrayBuffer();
+          const encBuf= await encryptArrayBuffer(buf, sharedKey);
+          payload.media_type = file.type;
+          payload.media_content_for_sender = encBuf.data;
+          payload.iv_media_for_sender = encBuf.iv;
+          payload.media_content_for_receiver = encBuf.data;
+          payload.iv_media_for_receiver = encBuf.iv;
+        } else {
+          payload.media_type = null;
+          payload.media_content_for_sender = null;
+          payload.iv_media_for_sender = null;
+          payload.media_content_for_receiver = null;
+          payload.iv_media_for_receiver = null;
+        }
+
+        // 3) Надсилаємо на сервер
         const res = await fetch("/api/send_message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        if (res.ok) {
-          const div = document.createElement("div");
-          div.classList.add("message", "my-message");
-          div.innerHTML = `<strong>Я:</strong> ${escapeHTML(content)}`;
-          if (media_url) {
-            const img = document.createElement("img");
-            img.src = media_url;
-            img.style.maxWidth = "200px";
-            div.appendChild(img);
-          }
-          document.getElementById("messages").appendChild(div);
-          scrollToBottom();
-          input.value = "";
-          replyInput.value = "";
-          mediaInput.value = "";
-        } else {
+        if (!res.ok) {
           const err = await res.json();
           alert("❌ " + err.error);
+          return;
         }
+
+        // 4) Відображаємо своє повідомлення
+        const div = document.createElement("div");
+        div.classList.add("message", "my-message");
+
+        // — відображаємо текст
+        if (content) {
+          const text = await decrypt(
+            { iv: payload.iv_for_sender, data: payload.content_for_sender },
+            sharedKey
+          );
+          div.innerHTML = `<strong>Я:</strong> ${escapeHTML(text)}`;
+        }
+
+        // — відображаємо файл/картинку
+        if (file) {
+          const blob = await decryptToBlob(
+            { iv: payload.iv_media_for_sender, data: payload.media_content_for_sender },
+            sharedKey,
+            payload.media_type
+          );
+          const url = URL.createObjectURL(blob);
+          if (payload.media_type.startsWith("image/")) {
+            const img = document.createElement("img");
+            img.src = url;
+            img.style.maxWidth = "200px";
+            div.appendChild(img);
+          } else {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `file_${Date.now()}`;
+            a.textContent = "Завантажити файл";
+            div.appendChild(a);
+          }
+        }
+
+        document.getElementById("messages").appendChild(div);
+        scrollToBottom();
+
+        // 5) Очищаємо форму
+        input.value = "";
+        replyInput.value = "";
+        mediaInput.value = "";
       } catch (err) {
         console.error(err);
         alert("❌ Помилка відправки");
       }
     });
   }
+
+
+
 
   // ===== Кнопка прикріплення медіа =====
   const mediaButton = document.getElementById("media-button");
@@ -485,11 +601,27 @@ document.addEventListener("DOMContentLoaded", async () => {
         const div = document.createElement("div");
         div.classList.add("message", "other-message");
         div.innerHTML = `<strong>${escapeHTML(data.sender)}</strong>: ` + `${escapeHTML(msgText)}`;
-        if (data.media_url && data.media_url !== "no_iv_for_media") {
-          const img = document.createElement("img");
-          img.src = data.media_url;
-          img.style.maxWidth = "200px";
-          div.appendChild(img);
+        if (data.media_content && data.iv_media) {
+          try {
+            const blob = await decryptToBlob(
+              { iv: data.iv_media, data: data.media_content },
+              await getSharedKey(data.sender),
+              data.media_type
+            );
+            const url = URL.createObjectURL(blob);
+            if (data.media_type.startsWith("image/")) {
+              const img = document.createElement("img");
+              img.src = url; img.style.maxWidth = "200px";
+              div.appendChild(img);
+            } else {
+              const a = document.createElement("a");
+              a.href = url; a.download = `file_from_${data.sender}`;
+              a.textContent = "Завантажити файл";
+              div.appendChild(a);
+            }
+          } catch (err) {
+            console.warn("Не вдалось дешифрувати медіа в real-time:", err);
+          }
         }
         document.getElementById("messages").appendChild(div);
         scrollToBottom();
