@@ -335,16 +335,25 @@ class DatabaseManager:
     def verify_code(self, user_id, code):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM verification_codes WHERE user_id = ? AND code = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
-                       (user_id, code))
+
+        cursor.execute(
+            """
+            SELECT id FROM verification_codes
+            WHERE user_id = ? AND code = ? AND used = 0
+              AND created_at >= strftime('%s','now','-15 minutes')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (user_id, code)
+        )
         result = cursor.fetchone()
         if result:
-            cursor.execute("UPDATE verification_codes SET used = 1 WHERE id = ?", (result[0],))
+            cursor.execute(
+                "UPDATE verification_codes SET used = 1 WHERE id = ?",
+                (result[0],)
+            )
             conn.commit()
-            conn.close()
-            return True
         conn.close()
-        return False
+        return bool(result)
 
     def update_password(self, user_id, new_password):
         hashed_password = generate_password_hash(new_password)

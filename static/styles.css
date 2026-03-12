@@ -368,6 +368,16 @@ header h1 {
   margin-top: 8px;
   border-radius: 4px;
 }
+.chat-file {
+  display: inline-block;
+  margin-top: 8px;
+  text-decoration: none;
+  color: #007bff;
+  font-size: 0.9em;
+}
+.chat-file:hover {
+  text-decoration: underline;
+}
 .hidden {
   display: none !important;
 }

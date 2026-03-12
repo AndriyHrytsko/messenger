@@ -94,7 +94,7 @@ def send_sms(to, message):
     """ Відправка SMS через Twilio """
     print(f"[DEBUG] Phone raw = '{to}' (length={len(to) if to else 0})")
     if not to or not to.startswith("+"):
-        print("❌ Номер телефону не вказано або має невірний формат.")
+        print("Номер телефону не вказано або має невірний формат.")
         return False
     client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
     try:
@@ -106,7 +106,7 @@ def send_sms(to, message):
         print(f"✅ SMS sent: {msg.sid}")
         return True
     except Exception as e:
-        print(f"❌ Error sending SMS: {e}")
+        print(f"Error sending SMS: {e}")
         return False
 
 def send_email(recipient, subject, message):
@@ -177,7 +177,7 @@ def login():
 
 @app.route('/two_factor', methods=['GET', 'POST'])
 def two_factor():
-    """ Логін із двофакторною автентифікацією """
+
     if 'pending_2fa' not in session or '2fa_code' not in session:
         flash("Двофакторна автентифікація не активована.", "danger")
         return redirect(url_for('login'))
@@ -465,7 +465,7 @@ def api_get_messages():
         return jsonify(error="Unauthorized"), 401
 
     contact = clean(request.args.get('contact',''), strip=True)
-    user_id    = session['user_id']
+    user_id = session['user_id']
     contact_id = db_manager.get_user_id(contact)
     if not db_manager.is_contact(user_id, contact_id):
         return jsonify(error="Forbidden"), 403

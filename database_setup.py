@@ -78,4 +78,4 @@ def create_tables(db_name="messenger.db"):
 
 if __name__ == "__main__":
     create_tables()
-    print("✅ База даних готова")
+    print("База даних готова")

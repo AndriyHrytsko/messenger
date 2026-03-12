@@ -442,12 +442,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
 
       // Елементи форми
-      const input      = document.getElementById("message-input");
+      const input = document.getElementById("message-input");
       const replyInput = document.getElementById("reply-to");
       const mediaInput = document.getElementById("media-input");
-      const receiver   = document.getElementById("chat-username").textContent;
-      const file       = mediaInput.files[0];
-      const content    = input.value.trim();
+      const receiver = document.getElementById("chat-username").textContent;
+      const file = mediaInput.files[0];
+      const content = input.value.trim();
 
       // Перевірки: має бути хоча б текст або файл
       if (!content && !file) {
@@ -473,7 +473,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         // — текст (якщо є)
         if (content) {
           const encSelf = await encrypt(content, sharedKey);
-          const encRec  = await encrypt(content, sharedKey);
+          const encRec = await encrypt(content, sharedKey);
           payload.content_for_sender = encSelf.data;
           payload.iv_for_sender = encSelf.iv;
           payload.content_for_receiver = encRec.data;
