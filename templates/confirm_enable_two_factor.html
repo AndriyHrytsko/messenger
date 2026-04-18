@@ -11,6 +11,7 @@
     <h1>Підтвердіть двофакторну автентифікацію</h1>
     <p>Введіть код, який був відправлений на ваш номер телефону.</p>
     <form method="POST" action="/confirm_enable_two_factor">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="text" name="code" placeholder="Введіть код" required>
       <button type="submit">Підтвердити</button>
     </form>

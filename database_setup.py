@@ -4,43 +4,38 @@ def create_tables(db_name="messenger.db"):
     with sqlite3.connect(db_name) as conn:
         cur = conn.cursor()
 
-        # --- USERS ----------------------------------------------------------
+        # --- USERS (Оновлена, чиста таблиця з усіма колонками) ---
         cur.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        username TEXT UNIQUE NOT NULL,
-                        email TEXT UNIQUE,
-                        phone TEXT UNIQUE,
-                        password TEXT NOT NULL,
-                        two_factor_enabled INTEGER DEFAULT 0,
-                        public_key TEXT
-                    )
-                """)
-        # якщо колонок ще немає — додаємо
-        try:
-            cur.execute("ALTER TABLE users ADD COLUMN failed_logins INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            cur.execute("ALTER TABLE users ADD COLUMN lockout_until DATETIME")
-        except sqlite3.OperationalError:
-            pass
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE,
+                phone TEXT UNIQUE,
+                password TEXT NOT NULL,
+                two_factor_enabled INTEGER DEFAULT 0,
+                public_key TEXT,
+                failed_logins INTEGER DEFAULT 0,
+                lockout_until DATETIME,
+                session_token TEXT,
+                email_hash TEXT UNIQUE,
+                phone_hash TEXT UNIQUE
+            )
+        """)
 
-        # --- MESSAGES -------------------------------------------------------
+        # --- MESSAGES ---
         cur.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id   INTEGER NOT NULL,
                 receiver_id INTEGER NOT NULL,
-                content_for_sender TEXT,  -- ciphertext для відправника
-                iv_for_sender      TEXT,  -- IV для розшифрування для себе
-                content_for_receiver TEXT, -- ciphertext для одержувача
-                iv_for_receiver      TEXT, -- IV для розшифрування для друга
-                -- Поля для медіа
-                media_type TEXT,                    -- MIME-тип, напр. 'image/png' або 'application/pdf'
-                media_content_for_sender TEXT,      -- base64 зашифровані дані для відправника
-                iv_media_for_sender TEXT,
-                media_content_for_receiver TEXT,    -- base64 зашифровані дані для отримувача
+                content_for_sender TEXT,
+                iv_for_sender      TEXT,
+                content_for_receiver TEXT,
+                iv_for_receiver      TEXT,
+                media_type           TEXT,
+                media_content_for_sender TEXT,
+                iv_media_for_sender  TEXT,
+                media_content_for_receiver TEXT,
                 iv_media_for_receiver TEXT,
                 reply_to    INTEGER,
                 status      TEXT DEFAULT 'sent',
@@ -51,7 +46,7 @@ def create_tables(db_name="messenger.db"):
             )
         """)
 
-        # --- CONTACTS -------------------------------------------------------
+        # --- CONTACTS ---
         cur.execute("""
             CREATE TABLE IF NOT EXISTS contacts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +58,7 @@ def create_tables(db_name="messenger.db"):
             )
         """)
 
-        # --- VERIFICATION CODES ------------------------------------------------
+        # --- VERIFICATION CODES ---
         cur.execute("""
             CREATE TABLE IF NOT EXISTS verification_codes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,8 +69,56 @@ def create_tables(db_name="messenger.db"):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
+
+        # --- GROUPS ---
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                creator_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (creator_id) REFERENCES users (id)
+            )
+        """)
+
+        # --- GROUP MEMBERS ---
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                encrypted_group_key TEXT NOT NULL,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_id, user_id),
+                FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """)
+
+        # --- GROUP MESSAGES ---
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                iv TEXT NOT NULL,
+                media_type TEXT,
+                media_content TEXT,
+                iv_media TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """)
+
+        # --- ІНДЕКСИ ---
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
+
         conn.commit()
 
 if __name__ == "__main__":
     create_tables()
-    print("База даних готова")
+    print("База даних готова та оновлена")

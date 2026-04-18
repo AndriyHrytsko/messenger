@@ -12,6 +12,7 @@
     <p>Натисніть кнопку нижче, щоб отримати код підтвердження на ваш номер телефону.</p>
 
     <form method="POST" action="/enable_two_factor">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">Увімкнути 2FA</button>
     </form>
   </div>

@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Месенджер</title>
   <link rel="stylesheet" href="/static/styles.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"
+        integrity="sha384-/KNQL8Nu5gCHLqwqfQjA689Hhoqgi2S84SNUxC3roTe4EhJ9AfLkp8QiQcU8AMzI"
+        crossorigin="anonymous" defer></script>
   <script src="/static/scriptic.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,6 +20,7 @@
       <div class="header-right">
         <a href="/profile"><div class="avatar">{{ session['user'][0] }}</div></a>
         <form id="logout-form" action="/logout" method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" id="logoutButton">Вийти</button>
         </form>
       </div>
@@ -28,8 +31,19 @@
         <h2>Контакти</h2>
         <ul id="contacts"></ul>
         <form id="add-friend-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="text" id="friend-username" placeholder="Введіть ім’я користувача" required />
           <button type="submit">Додати</button>
+        </form>
+        <hr style="margin: 15px 0;">
+        <h2>Групи</h2>
+        <ul id="groups"></ul>
+        <form id="create-group-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="text" id="group-name" placeholder="Назва групи" required style="width: 90%; margin-bottom: 5px;"/>
+          <p style="font-size: 11px; margin: 0 0 5px 0;">Учасники (Ctrl+Клік):</p>
+          <select id="group-members-select" multiple style="width: 100%; height: 60px; margin-bottom: 5px;"></select>
+          <button type="submit" style="width: 100%;">Створити групу</button>
         </form>
       </aside>
 
@@ -40,6 +54,7 @@
         <div id="fingerprint" class="fingerprint"></div>
         <div id="messages" class="chat-messages"></div>
         <form id="message-form" class="chat-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" id="reply-to" name="reply_to" value="" />
           <input type="text" id="message-input" placeholder="Введіть повідомлення" required />
           <input type="file" id="media-input" accept="*/*" style="display:none" />

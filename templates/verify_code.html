@@ -11,6 +11,7 @@
     <h2>Підтвердження коду</h2>
     <p>Введіть 6-значний код, який надіслано на вашу електронну пошту.</p>
     <form method="POST" action="/verify_code">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="text" name="code" placeholder="Введіть код" required autocomplete="off">
       <button type="submit">Підтвердити</button>
     </form>

@@ -10,6 +10,7 @@
     <div class="profile-container">
         <h2>Ваш профіль</h2>
         <form id="profile-form" method="POST" action="/update_profile">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label for="username">Ім'я користувача</label>
             <input type="text" id="username" name="username" value="{{ user[0] if user else '' }}" required>
 
@@ -31,14 +32,7 @@
                 <a href="{{ url_for('enable_two_factor') }}" class="action-button">Увімкнути 2FA</a>
             {% endif %}
         </div>
-
-        <button onclick="goBack()" class="back-button">Повернутись до месенджера</button>
+        <a href="/messenger" class="back-button" style="text-decoration: none; display: block; text-align: center; box-sizing: border-box;">Повернутись до месенджера</a>
     </div>
-
-    <script>
-        function goBack() {
-            window.location.href = "/messenger";
-        }
-    </script>
 </body>
 </html>

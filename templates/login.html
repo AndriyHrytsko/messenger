@@ -6,17 +6,13 @@
   <title>Вхід</title>
   <link rel="stylesheet" href="/static/styles.css">
 
-  <link
-    href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
-    rel="stylesheet"
-    integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb"
-    crossorigin="anonymous"
-  />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
 </head>
 <body class="auth-page">
   <div class="auth-container">
     <h1>Вхід</h1>
     <form action="/login" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="username">Ім'я користувача / Email / Телефон:</label>
       <input type="text" id="username" name="username" required>
       <label for="password">Пароль:</label>

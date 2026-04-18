@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", async () => {
   console.log("✅ JavaScript loaded");
   const currentUser = document.getElementById("app")?.dataset?.user || null;
+  const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
   console.log("Current user:", currentUser);
 
 
@@ -104,7 +105,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 7) Відправляємо публічний на сервер
     const res = await fetch("/api/public_key", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken
+      },
       body: JSON.stringify({ public_key: pubJwk })
     });
     const result = await res.json();
@@ -248,20 +252,35 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ===== Додавання друзів =====
   const addFriendForm = document.getElementById("add-friend-form");
+  // --- Змінні для пагінації ---
+  let currentOffset = 0;
+  const messageLimit = 50;
+  let isLoadingMessages = false;
+  let hasMoreMessages = true;
+  let currentActiveContact = null;
   if (addFriendForm) {
     addFriendForm.addEventListener("submit", async e => {
       e.preventDefault();
       const username = document.getElementById("friend-username").value.trim();
       if (!username) { alert("❌ Введіть ім’я користувача"); return; }
+
+      if (username === currentUser) {
+        alert("❌ Ви не можете додати самого себе в контакти!");
+        return;
+      }
+
       try {
         const res= await fetch("/api/add_contact", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken
+          },
           body: JSON.stringify({ username })
         });
         console.log("POST /api/public_key status:", res.status);
-        console.log("Response:", await res.json());
         const result = await res.json();
+        console.log("Response:", result); // Тепер ми логуємо вже готову змінну
         if (res.ok) {
           alert("✅ Контакт додано");
           document.getElementById("friend-username").value = "";
@@ -276,77 +295,119 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function loadContacts() {
-    fetch("/api/contacts")
-      .then(r => r.json())
-      .then(data => {
-        const ul = document.getElementById("contacts");
-        if (!ul) return;
-        ul.innerHTML = "";
-        (data.contacts || []).forEach(c => {
-          const li = document.createElement("li");
-          li.textContent = c;
-          li.style.cursor = "pointer";
-          li.addEventListener("click", () => openChat(c));
-          ul.appendChild(li);
-        });
-      })
-      .catch(err => console.error(err));
-  }
+      fetch("/api/contacts")
+        .then(r => r.json())
+        .then(data => {
+          const ul = document.getElementById("contacts");
+          const select = document.getElementById("group-members-select"); // Поле для груп
+
+          if (ul) ul.innerHTML = "";
+          if (select) select.innerHTML = ""; // Очищаємо перед оновленням
+
+          (data.contacts || []).forEach(c => {
+            // 1. Додаємо в ліве меню контактів
+            if (ul) {
+              const li = document.createElement("li");
+              li.textContent = c;
+              li.style.cursor = "pointer";
+              li.addEventListener("click", () => openChat(c));
+              ul.appendChild(li);
+            }
+
+            // 2. ДОДАНО: Одразу додаємо людину в меню вибору для групи
+            if (select) {
+              select.appendChild(new Option(c, c));
+            }
+          });
+        })
+        .catch(err => console.error(err));
+    }
 
   // ===== Відкриття чату =====
-  async function openChat(username) {
+// ===== Відкриття чату та завантаження повідомлень =====
+  async function openChat(username, isLoadMore = false) {
+    if (isLoadingMessages || (!hasMoreMessages && isLoadMore)) return;
+
     const chatWindow   = document.getElementById("chat-window");
     const chatUsername = document.getElementById("chat-username");
     const messagesDiv  = document.getElementById("messages");
 
-    chatUsername.textContent = username;
-    chatWindow.classList.remove("hidden");
-    messagesDiv.innerHTML = "";
+    if (!isLoadMore) {
+        currentActiveContact = username;
+        currentActiveGroup = null;
+        currentGroupKey = null;
+        currentOffset = 0;
+        hasMoreMessages = true;
+        chatUsername.textContent = username;
+        chatWindow.classList.remove("hidden");
+        messagesDiv.innerHTML = "";
 
-    // Позначити як прочитане
-    await fetch("/api/mark_as_read", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sender: username })
-    });
+        // Позначити як прочитане тільки при першому відкритті
+        await fetch("/api/mark_as_read", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken
+          },
+          body: JSON.stringify({ sender: username })
+        });
 
-    // Перевірка fingerprint для MITM
-    try {
-      const resp = await fetch(`/api/public_key/${username}`);
-      if (resp.ok) {
-        const body = await resp.json();
-        const jwk  = body.data.public_key;
-        const raw  = jwk.x + jwk.y;
-        const hash = await crypto.subtle.digest(
-          "SHA-256",
-          new TextEncoder().encode(raw)
-        );
-        const fp = Array.from(new Uint8Array(hash))
-          .map(b => b.toString(16).padStart(2, "0"))
-          .join("")
-          .slice(0, 32);
-        const fpKey = `fp_${username}`;
-        const oldFp = localStorage.getItem(fpKey);
-        if (oldFp && oldFp !== fp) {
-          if (!confirm(
-            `⚠️ Fingerprint для ${username} змінився!\n` +
-            `Старий: ${oldFp}\nНовий: ${fp}\n\n` +
-            `Натисніть OK, щоб підтвердити.`
-          )) return;
+        // Перевірка fingerprint для MITM (виконуємо лише при першому відкритті чату)
+        try {
+          const resp = await fetch(`/api/public_key/${username}`);
+          if (resp.ok) {
+            const body = await resp.json();
+            const jwk  = body.data.public_key;
+            const raw  = jwk.x + jwk.y;
+            const hash = await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(raw)
+            );
+            const fp = Array.from(new Uint8Array(hash))
+              .map(b => b.toString(16).padStart(2, "0"))
+              .join("")
+              .slice(0, 32);
+            const fpKey = `fp_${username}`;
+            const oldFp = localStorage.getItem(fpKey);
+            if (oldFp && oldFp !== fp) {
+              if (!confirm(
+                `⚠️ Fingerprint для ${username} змінився!\n` +
+                `Старий: ${oldFp}\nНовий: ${fp}\n\n` +
+                `Натисніть OK, щоб підтвердити.`
+              )) return;
+            }
+            localStorage.setItem(fpKey, fp);
+          }
+        } catch (err) {
+          console.error("MITM check failed:", err);
         }
-        localStorage.setItem(fpKey, fp);
-      }
-    } catch (err) {
-      console.error("MITM check failed:", err);
     }
+
+    isLoadingMessages = true;
 
     // Завантаження історії
     try {
       const sharedKey = await getSharedKey(username);
       console.log("🔑 sharedKey для", username, sharedKey);
 
-      const resp = await fetch(`/api/messages?contact=${username}`);
+      // ДОДАНО: limit та offset в URL
+      const resp = await fetch(`/api/messages?contact=${username}&limit=${messageLimit}&offset=${currentOffset}`);
       const data = await resp.json();
+
+      if (!data.messages || data.messages.length === 0) {
+          hasMoreMessages = false;
+          isLoadingMessages = false;
+          return;
+      }
+
+      if (data.messages.length < messageLimit) {
+          hasMoreMessages = false;
+      }
+
+      const oldScrollHeight = messagesDiv.scrollHeight;
+
+      // Створюємо тимчасовий контейнер для нових (точніше, старих) повідомлень
+      const tempFragment = document.createDocumentFragment();
 
       for (const msg of data.messages || []) {
         const div     = document.createElement("div");
@@ -354,7 +415,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         try {
           const isMe = msg.sender_username === currentUser;
-          // вибираємо відповідні поля для decrypt
           const iv   = isMe ? msg.iv_for_sender   : msg.iv_for_receiver;
           const dat  = isMe ? msg.content_for_sender : msg.content_for_receiver;
 
@@ -374,14 +434,12 @@ document.addEventListener("DOMContentLoaded", async () => {
           console.warn("❌ Дешифрування не вдалося:", err);
         }
 
-        // Відображаємо текст
         div.innerHTML = `<strong>${
           msg.sender_username === currentUser
             ? "Я"
             : escapeHTML(msg.sender_username)
         }:</strong> ${escapeHTML(content)}`;
 
-        // Малюємо медіа, якщо є
         if (msg.media_content_for_receiver && msg.iv_media_for_receiver) {
           try {
             const blob = await decryptToBlob(
@@ -410,18 +468,27 @@ document.addEventListener("DOMContentLoaded", async () => {
           }
         }
 
-        messagesDiv.appendChild(div);
+        // ДОДАНО: Якщо вантажимо історію, додаємо елементи зверху вниз у фрагмент
+        tempFragment.appendChild(div);
       }
 
-      scrollToBottom();
-      // — після scrollToBottom() або наприкінці openChat:
-      if (window.socket) {
-        const room = [currentUser, username].sort().join('_');
-        socket.emit('join', { room });
+      if (isLoadMore) {
+          // Вставляємо старі повідомлення на самий початок чату
+          messagesDiv.insertBefore(tempFragment, messagesDiv.firstChild);
+          // Коригуємо скрол, щоб залишитися на тому ж повідомленні
+          messagesDiv.scrollTop = messagesDiv.scrollHeight - oldScrollHeight;
+      } else {
+          messagesDiv.appendChild(tempFragment);
+          scrollToBottom();
+
       }
+
+      currentOffset += messageLimit;
 
     } catch (err) {
       console.error("Не вдалося завантажити історію:", err);
+    } finally {
+      isLoadingMessages = false;
     }
   }
 
@@ -449,11 +516,45 @@ document.addEventListener("DOMContentLoaded", async () => {
       const file = mediaInput.files[0];
       const content = input.value.trim();
 
-      // Перевірки: має бути хоча б текст або файл
+// Перевірки: має бути хоча б текст або файл
       if (!content && !file) {
         alert("❌ Введіть текст або виберіть файл для відправки");
         return;
       }
+
+      // ДОДАНО: ЛОГІКА ВІДПРАВКИ В ГРУПУ
+      if (currentActiveGroup && currentGroupKey) {
+        try {
+          const encMsg = await encrypt(content, currentGroupKey); // Шифруємо один раз для всіх!
+
+          await fetch("/api/groups/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+            body: JSON.stringify({
+              group_id: currentActiveGroup,
+              content: encMsg.data,
+              iv: encMsg.iv
+            })
+          });
+
+          // Малюємо в себе на екрані
+          const div = document.createElement("div");
+          div.classList.add("message", "my-message");
+          div.innerHTML = `<strong>Я:</strong> ${escapeHTML(content)}`;
+          document.getElementById("messages").appendChild(div);
+          scrollToBottom();
+          input.value = "";
+        } catch (err) { console.error("Помилка відправки в групу", err); }
+
+        return; // Зупиняємо скрипт, щоб не спрацювала логіка приватного чату
+      }
+      // КІНЕЦЬ ЛОГІКИ ГРУПИ (далі йде старий код приватного чату)
+
+      if (file && file.size > 7 * 1024 * 1024) {
+        alert("❌ Файл занадто великий! Максимальний розмір — 7 МБ.");
+        return;
+      }
+
       if (!receiver) {
         alert("❌ Виберіть контакт");
         return;
@@ -472,12 +573,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // — текст (якщо є)
         if (content) {
-          const encSelf = await encrypt(content, sharedKey);
-          const encRec = await encrypt(content, sharedKey);
-          payload.content_for_sender = encSelf.data;
-          payload.iv_for_sender = encSelf.iv;
-          payload.content_for_receiver = encRec.data;
-          payload.iv_for_receiver = encRec.iv;
+          const encMsg = await encrypt(content, sharedKey);
+          payload.content_for_sender = encMsg.data;
+          payload.iv_for_sender = encMsg.iv;
+          payload.content_for_receiver = encMsg.data;
+          payload.iv_for_receiver = encMsg.iv;
         } else {
           payload.content_for_sender = null;
           payload.iv_for_sender  = null;
@@ -505,7 +605,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         // 3) Надсилаємо на сервер
         const res = await fetch("/api/send_message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken
+          },
           body: JSON.stringify(payload)
         });
         if (!res.ok) {
@@ -574,16 +677,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     );
   }
 
-  // ===== Вихід (Logout) =====
-  const logoutButton = document.getElementById("logoutButton");
-  if (logoutButton) {
-    logoutButton.addEventListener("click", async () => {
-      if ((await fetch("/logout", { method: "POST" })).ok) {
-        window.location.href = "/login";
-      }
-    });
-  }
-
   // ===== Real-time через Socket.IO =====
   if (typeof io !== "undefined") {
     window.socket = io({ transports: ["websocket"] });
@@ -634,7 +727,157 @@ document.addEventListener("DOMContentLoaded", async () => {
     socket.on("user_online", data => console.log(`🟢 ${data.username} онлайн`));
     socket.on("user_offline", data => console.log(`🔴 ${data.username} офлайн`));
   }
-
+  // ===== Обробник скролу для завантаження історії =====
+  const messagesContainer = document.getElementById("messages");
+  if (messagesContainer) {
+      messagesContainer.addEventListener('scroll', () => {
+          // Якщо докрутили до верху (залишилось 10 пікселів або менше)
+          if (messagesContainer.scrollTop <= 10 && currentActiveContact && hasMoreMessages && !isLoadingMessages) {
+              openChat(currentActiveContact, true);
+          }
+      });
+  }
   // ===== Початкове завантаження контактів =====
   loadContacts();
+
+  // ====================================================
+  // ===== ГРУПОВІ ЧАТИ (Group Key E2E Магія) ===========
+  // ====================================================
+  let currentActiveGroup = null;
+  let currentGroupKey = null;
+
+  function loadGroups() {
+    fetch("/api/groups")
+      .then(r => r.json())
+      .then(data => {
+        const ul = document.getElementById("groups");
+        if (!ul) return;
+        ul.innerHTML = "";
+        (data.groups || []).forEach(g => {
+          const li = document.createElement("li");
+          li.innerHTML = `👥 <strong>${g.name}</strong>`;
+          li.style.cursor = "pointer";
+          li.addEventListener("click", () => openGroupChat(g.id, g.name, g.creator));
+          ul.appendChild(li);
+        });
+      });
+  }
+  loadGroups(); // Викликаємо при старті
+
+  // 2. Створення групи (Генерація AES ключа)
+  const createGroupForm = document.getElementById("create-group-form");
+  if (createGroupForm) {
+    createGroupForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const groupName = document.getElementById("group-name").value.trim();
+      const select = document.getElementById("group-members-select");
+      const selectedMembers = Array.from(select.selectedOptions).map(opt => opt.value);
+
+      if (!groupName || selectedMembers.length === 0) {
+        alert("Введіть назву та оберіть хоча б одного учасника!"); return;
+      }
+      selectedMembers.push(currentUser); // Додаємо себе
+
+      try {
+        // Створюємо ОДИН ключ для кімнати
+        const groupKeyCrypto = await crypto.subtle.generateKey(
+          { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+        );
+        const groupKeyRaw = await crypto.subtle.exportKey("raw", groupKeyCrypto);
+
+        // Шифруємо цей ключ персонально для кожного учасника
+        const membersData = [];
+        for (const member of selectedMembers) {
+          const sharedKey = await getSharedKey(member); // Наш спільний ключ з учасником
+          const encGroupKey = await encryptArrayBuffer(groupKeyRaw, sharedKey);
+          membersData.push({
+            username: member,
+            encrypted_key: JSON.stringify({ iv: encGroupKey.iv, data: encGroupKey.data })
+          });
+        }
+
+        // Відправляємо зашифровані ключі на сервер
+        const res = await fetch("/api/groups/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+          body: JSON.stringify({ name: groupName, members: membersData })
+        });
+
+        if (res.ok) {
+          alert("✅ Групу створено!");
+          document.getElementById("group-name").value = "";
+          loadGroups();
+        } else { alert("❌ Помилка створення"); }
+      } catch (err) { console.error(err); alert("❌ Помилка криптографії"); }
+    });
+  }
+
+  // 3. Відкриття групи (Розшифрування ключа та історії)
+  async function openGroupChat(groupId, groupName, creatorUsername) {
+    currentActiveContact = null; // Вимикаємо приватний чат
+    currentActiveGroup = groupId;
+    document.getElementById("chat-username").textContent = `${groupName} (Група)`;
+    document.getElementById("chat-window").classList.remove("hidden");
+    const messagesDiv = document.getElementById("messages");
+    messagesDiv.innerHTML = "<i>Розшифрування ключа кімнати...</i>";
+
+    try {
+      // Завантажуємо свій екземпляр ключа групи з БД
+      const res = await fetch(`/api/groups/${groupId}/key`);
+      const data = await res.json();
+      const encData = JSON.parse(data.encrypted_key);
+
+      // Отримуємо спільний ключ з ТВОРЦЕМ групи (бо він зашифрував цей ключ для нас)
+      const sharedWithCreator = await getSharedKey(creatorUsername);
+
+      // Розшифровуємо ключ групи
+      const decryptedKeyRaw = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: Uint8Array.from(atob(encData.iv), c => c.charCodeAt(0)) },
+        sharedWithCreator,
+        Uint8Array.from(atob(encData.data), c => c.charCodeAt(0))
+      );
+
+      currentGroupKey = await crypto.subtle.importKey(
+        "raw", decryptedKeyRaw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]
+      );
+
+      // Підключаємось до кімнати в сокетах
+      if (window.socket) window.socket.emit("join_group", { group_id: groupId });
+
+      // Завантажуємо історію повідомлень
+      const histRes = await fetch(`/api/groups/messages?group_id=${groupId}&limit=50`);
+      const histData = await histRes.json();
+      messagesDiv.innerHTML = "";
+
+      for (const msg of histData.messages || []) {
+        const text = await decrypt({ iv: msg.iv, data: msg.content }, currentGroupKey);
+        const isMe = msg.sender_username === currentUser;
+        const div = document.createElement("div");
+        div.classList.add("message", isMe ? "my-message" : "other-message");
+        div.innerHTML = `<strong>${isMe ? "Я" : escapeHTML(msg.sender_username)}:</strong> ${escapeHTML(text)}`;
+        messagesDiv.appendChild(div);
+      }
+      scrollToBottom();
+
+    } catch (err) {
+      console.error(err);
+      messagesDiv.innerHTML = "❌ Помилка доступу до групи.";
+    }
+  }
+
+  // 4. Слухач групових повідомлень (Real-Time)
+  if (typeof socket !== 'undefined') {
+    socket.on("new_group_message", async data => {
+      if (currentActiveGroup === data.group_id && data.sender !== currentUser) {
+        try {
+          const text = await decrypt({ iv: data.iv, data: data.content }, currentGroupKey);
+          const div = document.createElement("div");
+          div.classList.add("message", "other-message");
+          div.innerHTML = `<strong>${escapeHTML(data.sender)}:</strong> ${escapeHTML(text)}`;
+          document.getElementById("messages").appendChild(div);
+          scrollToBottom();
+        } catch(e) { console.error("Помилка розшифрування", e); }
+      }
+    });
+  }
 });
