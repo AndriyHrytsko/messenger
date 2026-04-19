@@ -880,4 +880,85 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
+
+  // ====================================================
+  // ===== ПЕРЕГЛЯД ПРОФІЛІВ ТА УЧАСНИКІВ ГРУПИ =========
+  // ====================================================
+
+  const chatUsernameEl = document.getElementById("chat-username");
+  const userInfoModal = document.getElementById("user-info-modal");
+  const groupMembersModal = document.getElementById("group-members-modal");
+
+  // 1. Клік на ім'я чату (зверху)
+  chatUsernameEl.addEventListener("click", async () => {
+    if (currentActiveGroup) {
+      // Якщо це група — завантажуємо список учасників
+      try {
+        const res = await fetch(`/api/groups/${currentActiveGroup}/members`);
+        const data = await res.json();
+        const ul = document.getElementById("modal-group-list");
+        ul.innerHTML = "";
+
+        data.members.forEach(member => {
+          const li = document.createElement("li");
+          li.textContent = member;
+          li.style.padding = "8px";
+          li.style.borderBottom = "1px solid #eee";
+          li.style.cursor = "pointer";
+
+          // При кліку на учасника групи — відкриваємо його профіль
+          li.addEventListener("click", () => {
+            groupMembersModal.classList.add("hidden");
+            showUserProfile(member);
+          });
+
+          ul.appendChild(li);
+        });
+        groupMembersModal.classList.remove("hidden");
+      } catch (err) { console.error("Помилка завантаження учасників", err); }
+
+    } else if (currentActiveContact) {
+      // Якщо це приватний чат — одразу відкриваємо профіль
+      showUserProfile(currentActiveContact);
+    }
+  });
+
+  // 2. Функція показу профілю
+  async function showUserProfile(username) {
+    try {
+      const res = await fetch(`/api/user/${username}/info`);
+      if (res.ok) {
+        const info = await res.json();
+        document.getElementById("modal-username").textContent = info.username;
+        document.getElementById("modal-avatar").textContent = info.username[0].toUpperCase();
+        document.getElementById("modal-email").textContent = info.email || "Приховано";
+        document.getElementById("modal-phone").textContent = info.phone || "Приховано";
+
+        // Кнопка "Написати"
+        const msgBtn = document.getElementById("modal-msg-btn");
+        if (info.username === currentUser) {
+          msgBtn.style.display = "none"; // Самому собі писати не можна
+        } else {
+          msgBtn.style.display = "block";
+          msgBtn.onclick = async () => {
+            userInfoModal.classList.add("hidden");
+
+            // МАГІЯ: Автоматично додаємо людину в друзі (взаємно) перед відкриттям чату
+            await fetch("/api/add_contact", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+              body: JSON.stringify({ username: info.username })
+            });
+            loadContacts(); // Оновлюємо ліве меню
+
+            // Відкриваємо приватний чат
+            openChat(info.username);
+          };
+        }
+
+        userInfoModal.classList.remove("hidden");
+      }
+    } catch (err) { console.error("Помилка завантаження профілю", err); }
+  }
+
 });

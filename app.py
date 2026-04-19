@@ -158,51 +158,57 @@ def send_email(recipient, subject, message):
 def index():
     return redirect(url_for('login'))
 
+
 @limiter.limit("5 per 15 minutes")
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = clean(request.form.get('username',''), strip=True).replace('\n', '').replace('\r', '')
-        password = request.form.get('password','')
-        user = db_manager.get_user_by_username(username)
+        # Те, що ввів юзер (може бути нік, пошта або телефон)
+        input_identifier = clean(request.form.get('username', ''), strip=True).replace('\n', '').replace('\r', '')
+        password = request.form.get('password', '')
+
+        user = db_manager.get_user_for_login(input_identifier)
 
         # якщо заблокований
         if user and user.get('lockout_until'):
             until = datetime.fromisoformat(user['lockout_until'])
             if datetime.utcnow() < until:
-                logging.warning(f"Blocked login attempt for {username}")
+                logging.warning(f"Blocked login attempt for {input_identifier}")
                 flash("Обліковий запис заблоковано. Спробуйте пізніше.", "danger")
                 return redirect(url_for('login'))
 
         # перевірка пароля
         if not user or not check_password_hash(user['password'], password):
-            logging.info(f"Failed login for {username}")
+            logging.info(f"Failed login for {input_identifier}")
             if user:
                 db_manager.increment_failed_logins(user['id'])
-                if user.get('failed_logins',0) + 1 >= 5:
+                if user.get('failed_logins', 0) + 1 >= 5:
                     lock_until = datetime.utcnow() + timedelta(minutes=15)
                     db_manager.set_lockout(user['id'], lock_until.isoformat())
-                    logging.warning(f"User {username} locked until {lock_until}")
-            flash("Невірний логін або пароль.", "danger")
+                    logging.warning(f"User {input_identifier} locked until {lock_until}")
+            flash("❌ Невірне ім'я користувача, Email, телефон або пароль.", "danger")
             return redirect(url_for('login'))
 
         # успішний логін
         db_manager.reset_failed_logins(user['id'])
-        logging.info(f"Successful login for {username}")
+        logging.info(f"Successful login for {user['username']}")
 
         # 2FA-флоу
-        if user.get('two_factor_enabled',0) == 1:
-            session['pending_2fa'] = {'username':username,'user_id':user['id']}
+        if user.get('two_factor_enabled', 0) == 1:
+            session['pending_2fa'] = {'username': user['username'], 'user_id': user['id']}
             code = str(secrets.SystemRandom().randint(100000, 999999))
             session['2fa_code'] = code
             send_sms(user['phone'], f"Ваш код: {code}")
             return redirect(url_for('two_factor'))
 
-        session['user'] = username
+        # ВАЖЛИВО: Зберігаємо справжній нікнейм з БД, а не те, що ввів юзер!
+        session['user'] = user['username']
         session['user_id'] = user['id']
+
         # Завжди генеруємо нову сесію при вході
         token = db_manager.rotate_session_token(user['id'])
         session['session_token'] = token
+
         return redirect(url_for('messenger'))
 
     return render_template('login.html')
@@ -641,6 +647,29 @@ def api_send_message():
 
     return jsonify(status="ok"), 200
 
+
+@app.route('/api/user/<username>/info', methods=['GET'])
+def api_get_user_info(username):
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    info = db_manager.get_user_public_info(username)
+    if info:
+        return jsonify(info), 200
+    return jsonify({"error": "User not found"}), 404
+
+
+@app.route('/api/groups/<int:group_id>/members', methods=['GET'])
+def api_get_group_members(group_id):
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Перевіряємо, чи має юзер доступ до групи
+    if not db_manager.get_group_key(group_id, session['user']):
+        return jsonify({"error": "Forbidden"}), 403
+
+    members = db_manager.get_group_members_list(group_id)
+    return jsonify({"members": members}), 200
 
 # ==========================================
 # === API ДЛЯ ГРУПОВИХ ЧАТІВ ===============

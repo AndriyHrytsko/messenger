@@ -11,6 +11,15 @@
 <body class="auth-page">
   <div class="auth-container">
     <h1>Вхід</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-messages">
+          {% for category, message in messages %}
+            <p class="{{ category }}">{{ message }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
     <form action="/login" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="username">Ім'я користувача / Email / Телефон:</label>

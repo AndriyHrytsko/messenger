@@ -118,6 +118,29 @@ class DatabaseManager:
             """, (sender_id, receiver_id))
             conn.commit()
 
+    def get_user_for_login(self, identifier):
+        """Шукає користувача за логіном, або поштою, або телефоном"""
+        # Створюємо хеш на випадок, якщо це пошта або телефон
+        pii_hash = self.hash_pii(identifier)
+
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                            SELECT id, username, password, phone, two_factor_enabled, public_key 
+                            FROM users 
+                            WHERE username COLLATE NOCASE = ? OR email_hash = ? OR phone_hash = ?
+                        """, (identifier, pii_hash, pii_hash))
+            user = cursor.fetchone()
+            if user:
+                return {
+                    "id": user[0],
+                    "username": user[1],
+                    "password": user[2],
+                    "phone": self.decrypt_pii(user[3]),
+                    "two_factor_enabled": user[4],
+                    "public_key": user[5]
+                }
+            return None
     def get_user_by_username(self, username):
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -554,3 +577,30 @@ class DatabaseManager:
             })
         messages.reverse()
         return messages
+
+    def get_group_members_list(self, group_id):
+        """Отримує імена всіх учасників конкретної групи"""
+        with self.connect() as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT u.username 
+                FROM group_members gm
+                JOIN users u ON gm.user_id = u.id
+                WHERE gm.group_id = ?
+            """, (group_id,))
+            return [row[0] for row in c.fetchall()]
+
+    def get_user_public_info(self, username):
+        """Отримує деталі профілю користувача"""
+        with self.connect() as conn:
+            c = conn.cursor()
+            c.execute("SELECT username, email, phone FROM users WHERE username = ?", (username,))
+            user = c.fetchone()
+            if user:
+                # Розшифровуємо PII-дані для відображення в профілі
+                return {
+                    "username": user[0],
+                    "email": self.decrypt_pii(user[1]),
+                    "phone": self.decrypt_pii(user[2])
+                }
+            return None
