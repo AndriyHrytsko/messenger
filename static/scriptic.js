@@ -63,19 +63,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 2) Перевіряємо, чи це дійсний JWK (має поле "kty")
     if (storedPrivJwk?.kty && storedPubJwk?.kty) {
       privKeyCrypto = await crypto.subtle.importKey(
-        "jwk",
-        storedPrivJwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        false,
-        ["deriveKey"]
+        "jwk", storedPrivJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]
       );
       pubKeyCrypto = await crypto.subtle.importKey(
-        "jwk",
-        storedPubJwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        false,
-        []
+        "jwk", storedPubJwk, { name: "ECDH", namedCurve: "P-256" }, false, []
       );
+
+      // ДОДАНО: Завжди "нагадуємо" серверу свій ключ при завантаженні сторінки
+      // (на випадок, якщо базу даних на сервері було очищено)
+      fetch("/api/public_key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+        body: JSON.stringify({ public_key: storedPubJwk })
+      }).catch(e => console.warn("Не вдалося оновити ключ на сервері", e));
+
     } else {
       throw new Error("Invalid JWK");
     }
@@ -123,115 +124,127 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
 
-  // ===== Отримання спільного AES-GCM ключа через ECDH =====
-  async function getSharedKey(otherUsername) {
-    const cacheName = `shared_${otherUsername}`;
+  // ====================================================
+  // ===== MULTI-DEVICE FAN-OUT КРИПТОГРАФІЯ ============
+  // ====================================================
 
-    // 1) Якщо вже є Uint8Array в IndexedDB — імпортуємо напряму
-    const cached = await getKey(cacheName);
-    if (cached instanceof Uint8Array) {
-      return crypto.subtle.importKey(
-        "raw",
-        cached.buffer,
-        { name: "AES-GCM" },
-        true,
-        ["encrypt","decrypt"]
-      );
+  async function getSharedKeysForUser(username) {
+    const resp = await fetch(`/api/public_key/${username}`);
+    if (!resp.ok) return [];
+    const { data: { public_keys } } = await resp.json();
+
+    const keys = [];
+    for (const jwk of public_keys) {
+      try {
+        const { key_ops, ...jwkClean } = jwk;
+        const pub = await crypto.subtle.importKey("jwk", jwkClean, { name: "ECDH", namedCurve: "P-256" }, false, []);
+        const shared = await crypto.subtle.deriveKey(
+          { name: "ECDH", public: pub }, privKeyCrypto, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+        );
+        keys.push(shared);
+      } catch (e) { console.warn("Помилка генерації спільного ключа", e); }
     }
-
-    // 2) Інакше — отримуємо JWK вашого співрозмовника і робимо ECDH-deriveKey
-    const resp = await fetch(`/api/public_key/${otherUsername}`);
-    if (!resp.ok) {
-      throw new Error("Не вдалося отримати публічний ключ для " + otherUsername);
-    }
-    const { data: { public_key: theirJwk } } = await resp.json();
-
-    // Прибираємо key_ops, щоб importKey не конфліктував з JWK.key_ops§
-    const { key_ops, ...jwkClean } = theirJwk;
-
-    // Імпортуємо публічний ключ без жодних операцій
-    const theirPub = await crypto.subtle.importKey(
-      "jwk",
-      jwkClean,
-      { name: "ECDH", namedCurve: "P-256" },
-      false,
-      []
-    );
-
-    // Генеруємо спільний ключ AES-GCM
-    const sharedKey = await crypto.subtle.deriveKey(
-      { name: "ECDH", public: theirPub },
-      privKeyCrypto,
-      { name: "AES-GCM", length: 256 },
-      true,
-      ["encrypt","decrypt"]
-    );
-
-    // 3) Експортуємо raw-ключ та зберігаємо в IndexedDB як Uint8Array
-    const rawKey= await crypto.subtle.exportKey("raw", sharedKey);
-    const rawBytes= new Uint8Array(rawKey);
-    await setKey(cacheName, rawBytes);
-
-    return sharedKey;
+    return keys;
   }
 
-
-  // ===== Шифрування / Дешифрування =====
-  async function encrypt(text, key) {
+  async function encryptBase(payload, key) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      new TextEncoder().encode(text)
-    );
+    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, payload);
     return {
       iv: btoa(String.fromCharCode(...iv)),
       data: btoa(String.fromCharCode(...new Uint8Array(encrypted)))
     };
   }
 
-  async function decrypt(payload, key) {
-    if (!payload?.iv || !payload?.data || !key) {
-      throw new Error("Invalid decrypt parameters");
+  // Fan-Out Шифрування тексту (робить масив шифротекстів)
+  async function encryptFanOut(contentStr, sharedKeysArray) {
+    const payload = new TextEncoder().encode(contentStr);
+    const ivs = [], datas = [];
+    for (const key of sharedKeysArray) {
+      const enc = await encryptBase(payload, key);
+      ivs.push(enc.iv); datas.push(enc.data);
     }
-    const iv   = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
+    return { iv: JSON.stringify(ivs), data: JSON.stringify(datas) };
+  }
+
+  // Fan-Out Шифрування файлів
+  async function encryptArrayBufferFanOut(buffer, sharedKeysArray) {
+    const ivs = [], datas = [];
+    for (const key of sharedKeysArray) {
+      const enc = await encryptBase(buffer, key);
+      ivs.push(enc.iv); datas.push(enc.data);
+    }
+    return { iv: JSON.stringify(ivs), data: JSON.stringify(datas) };
+  }
+
+  // Fan-Out Дешифрування (перебирає ключі, поки не підійде правильний)
+  async function decryptFanOutBase(ivStr, dataStr, senderUsername, isBuffer = false) {
+    let ivArr, dataArr;
+    try {
+      ivArr = JSON.parse(ivStr); dataArr = JSON.parse(dataStr);
+      if (!Array.isArray(ivArr)) throw new Error();
+    } catch(e) {
+      // Зворотна сумісність: якщо це старе повідомлення з 1 ключем
+      ivArr = [ivStr]; dataArr = [dataStr];
+    }
+
+    const senderSharedKeys = await getSharedKeysForUser(senderUsername);
+    for (const key of senderSharedKeys) {
+      for (let i = 0; i < dataArr.length; i++) {
+        try {
+          const iv = Uint8Array.from(atob(ivArr[i]), c => c.charCodeAt(0));
+          const data = Uint8Array.from(atob(dataArr[i]), c => c.charCodeAt(0));
+          const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+          return isBuffer ? decrypted : new TextDecoder().decode(decrypted);
+        } catch (e) { continue; } // Якщо ключ не підійшов — пробуємо наступний
+      }
+    }
+    throw new Error("Жоден ключ не підійшов");
+  }
+
+  async function decryptFanOut(ivStr, dataStr, senderUsername) {
+    return await decryptFanOutBase(ivStr, dataStr, senderUsername, false);
+  }
+
+  async function decryptToBlobFanOut(ivStr, dataStr, senderUsername, type) {
+    const buffer = await decryptFanOutBase(ivStr, dataStr, senderUsername, true);
+    return new Blob([buffer], { type });
+  }
+
+  // Базове дешифрування (лишилося тільки для Групових чатів)
+  async function decryptDirect(payload, key) {
+    const iv = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
     const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      data
-    );
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
     return new TextDecoder().decode(decrypted);
   }
 
-    // encryptArrayBuffer: шифрує ArrayBuffer → { iv, data }
-  async function encryptArrayBuffer(buffer, key) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      buffer
-    );
-    return {
-      iv: btoa(String.fromCharCode(...iv)),
-      data: btoa(String.fromCharCode(...new Uint8Array(encrypted)))
-    };
-  }
-
-  // decryptToBlob: дешифрує в Blob для відображення/завантаження
-  async function decryptToBlob(payload, key, type) {
-    const iv   = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
-    const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      data
-    );
-    return new Blob([decrypted], { type });
-  }
-
-
   // ===== Утиліти =====
+  // ===== Антивірусна перевірка (Magic Bytes) =====
+  async function validateFileSignature(file) {
+    if (!file) return { isSafe: true, realType: null };
+
+    const buffer = await file.slice(0, 4).arrayBuffer();
+    const view = new Uint8Array(buffer);
+    let hex = '';
+    for (let i = 0; i < view.length; i++) {
+      hex += view[i].toString(16).padStart(2, '0').toUpperCase();
+    }
+
+    const allowedSignatures = {
+      "FFD8FFE0": "image/jpeg", "FFD8FFE1": "image/jpeg",
+      "FFD8FFE2": "image/jpeg", "FFD8FFE3": "image/jpeg",
+      "FFD8FFE8": "image/jpeg", "89504E47": "image/png",
+      "47494638": "image/gif", "25504446": "application/pdf",
+      "504B0304": "application/zip" // Для ZIP, DOCX, XLSX
+    };
+
+    for (const [sig, mimeType] of Object.entries(allowedSignatures)) {
+      if (hex.startsWith(sig)) return { isSafe: true, realType: mimeType };
+    }
+    console.warn("🚫 Заблоковано підозрілий файл із сигнатурою:", hex);
+    return { isSafe: false, realType: null };
+  }
   function escapeHTML(str) {
     const div = document.createElement("div");
     div.textContent = str;
@@ -333,6 +346,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const messagesDiv  = document.getElementById("messages");
 
     if (!isLoadMore) {
+        document.getElementById("leave-group-btn").classList.add("hidden");
         currentActiveContact = username;
         currentActiveGroup = null;
         currentGroupKey = null;
@@ -385,12 +399,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     isLoadingMessages = true;
 
-    // Завантаження історії
+    // Завантаження історії (Fan-Out)
     try {
-      const sharedKey = await getSharedKey(username);
-      console.log("🔑 sharedKey для", username, sharedKey);
-
-      // ДОДАНО: limit та offset в URL
       const resp = await fetch(`/api/messages?contact=${username}&limit=${messageLimit}&offset=${currentOffset}`);
       const data = await resp.json();
 
@@ -399,97 +409,55 @@ document.addEventListener("DOMContentLoaded", async () => {
           isLoadingMessages = false;
           return;
       }
-
-      if (data.messages.length < messageLimit) {
-          hasMoreMessages = false;
-      }
+      if (data.messages.length < messageLimit) hasMoreMessages = false;
 
       const oldScrollHeight = messagesDiv.scrollHeight;
-
-      // Створюємо тимчасовий контейнер для нових (точніше, старих) повідомлень
       const tempFragment = document.createDocumentFragment();
 
       for (const msg of data.messages || []) {
-        const div     = document.createElement("div");
-        let content   = "[Неможливо прочитати]";
+        const div = document.createElement("div");
+        let content = "[Неможливо прочитати]";
+        const isMe = msg.sender_username === currentUser;
 
         try {
-          const isMe = msg.sender_username === currentUser;
-          const iv   = isMe ? msg.iv_for_sender   : msg.iv_for_receiver;
-          const dat  = isMe ? msg.content_for_sender : msg.content_for_receiver;
+          const iv = isMe ? msg.iv_for_sender : msg.iv_for_receiver;
+          const dat = isMe ? msg.content_for_sender : msg.content_for_receiver;
 
           if (iv && dat) {
-            content = await decrypt(
-              { iv, data: dat },
-              sharedKey
-            );
+            // Використовуємо нову Fan-Out функцію дешифрування
+            content = await decryptFanOut(iv, dat, isMe ? currentUser : msg.sender_username);
           }
+          div.classList.add("message", isMe ? "my-message" : "other-message");
+        } catch (err) { console.warn("❌ Дешифрування не вдалося:", err); }
 
-          div.classList.add(
-            "message",
-            isMe ? "my-message" : "other-message"
-          );
+        div.innerHTML = `<strong>${isMe ? "Я" : escapeHTML(msg.sender_username)}:</strong> ${escapeHTML(content)}`;
 
-        } catch (err) {
-          console.warn("❌ Дешифрування не вдалося:", err);
-        }
-
-        div.innerHTML = `<strong>${
-          msg.sender_username === currentUser
-            ? "Я"
-            : escapeHTML(msg.sender_username)
-        }:</strong> ${escapeHTML(content)}`;
-
-        if (msg.media_content_for_receiver && msg.iv_media_for_receiver) {
+        const mediaIv = isMe ? msg.iv_media_for_sender : msg.iv_media_for_receiver;
+        const mediaDat = isMe ? msg.media_content_for_sender : msg.media_content_for_receiver;
+        if (mediaDat && mediaIv) {
           try {
-            const blob = await decryptToBlob(
-              {
-                iv:   msg.iv_media_for_receiver,
-                data: msg.media_content_for_receiver
-              },
-              sharedKey,
-              msg.media_type
-            );
+            const blob = await decryptToBlobFanOut(mediaIv, mediaDat, isMe ? currentUser : msg.sender_username, msg.media_type);
             const url = URL.createObjectURL(blob);
             if (msg.media_type.startsWith("image/")) {
-              const img = document.createElement("img");
-              img.src = url;
-              img.style.maxWidth = "200px";
-              div.appendChild(img);
+              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
             } else {
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `file_${msg.id}`;
-              a.textContent = "Завантажити файл";
-              div.appendChild(a);
+              const a = document.createElement("a"); a.href = url; a.download = `file_${msg.id}`; a.textContent = "Завантажити файл"; div.appendChild(a);
             }
-          } catch (err) {
-            console.warn("Помилка дешифрування медіа:", err);
-          }
+          } catch (err) {}
         }
-
-        // ДОДАНО: Якщо вантажимо історію, додаємо елементи зверху вниз у фрагмент
         tempFragment.appendChild(div);
       }
 
       if (isLoadMore) {
-          // Вставляємо старі повідомлення на самий початок чату
-          messagesDiv.insertBefore(tempFragment, messagesDiv.firstChild);
-          // Коригуємо скрол, щоб залишитися на тому ж повідомленні
-          messagesDiv.scrollTop = messagesDiv.scrollHeight - oldScrollHeight;
+        messagesDiv.insertBefore(tempFragment, messagesDiv.firstChild);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight - oldScrollHeight;
       } else {
-          messagesDiv.appendChild(tempFragment);
-          scrollToBottom();
-
+        messagesDiv.appendChild(tempFragment);
+        scrollToBottom();
       }
-
       currentOffset += messageLimit;
-
-    } catch (err) {
-      console.error("Не вдалося завантажити історію:", err);
-    } finally {
-      isLoadingMessages = false;
-    }
+    } catch (err) { console.error(err); }
+    finally { isLoadingMessages = false; }
   }
 
   // ===== Динамічна required-валидація =====
@@ -515,45 +483,88 @@ document.addEventListener("DOMContentLoaded", async () => {
       const receiver = document.getElementById("chat-username").textContent;
       const file = mediaInput.files[0];
       const content = input.value.trim();
+      let verifiedMediaType = null;
 
-// Перевірки: має бути хоча б текст або файл
+      if (file) {
+        if (file.size > 7 * 1024 * 1024) {
+          alert("❌ Файл занадто великий! Максимальний розмір — 7 МБ.");
+          return;
+        }
+
+        const fileCheck = await validateFileSignature(file);
+        if (!fileCheck.isSafe) {
+          alert("🚫 Безпека: Формат файлу не підтримується або файл підроблено! Дозволені лише JPG, PNG, GIF, PDF та DOCX/ZIP.");
+          mediaInput.value = "";
+          messageInput.required = true;
+          return;
+        }
+        verifiedMediaType = fileCheck.realType;
+      }
+
+      // Перевірки: має бути хоча б текст або файл
       if (!content && !file) {
         alert("❌ Введіть текст або виберіть файл для відправки");
         return;
       }
 
-      // ДОДАНО: ЛОГІКА ВІДПРАВКИ В ГРУПУ
+      // ОНОВЛЕНО: ЛОГІКА ВІДПРАВКИ В ГРУПУ (Текст + Медіа)
       if (currentActiveGroup && currentGroupKey) {
         try {
-          const encMsg = await encrypt(content, currentGroupKey); // Шифруємо один раз для всіх!
+          let payload = {
+            group_id: currentActiveGroup,
+            content: null,
+            iv: null,
+            media_type: null,
+            media_content: null,
+            iv_media: null
+          };
+
+          // Шифруємо текст, якщо він є
+          if (content) {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, currentGroupKey, new TextEncoder().encode(content));
+            payload.content = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+            payload.iv = btoa(String.fromCharCode(...iv));
+          }
+
+          // Шифруємо файл, якщо він є
+          if (file) {
+            if (file.size > 7 * 1024 * 1024) { alert("❌ Файл занадто великий!"); return; }
+            const buf = await file.arrayBuffer();
+            const encFile = await encryptBase(buf, currentGroupKey); // Використовуємо існуючу функцію
+            payload.media_type = verifiedMediaType;
+            payload.media_content = encFile.data;
+            payload.iv_media = encFile.iv;
+          }
 
           await fetch("/api/groups/send", {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-            body: JSON.stringify({
-              group_id: currentActiveGroup,
-              content: encMsg.data,
-              iv: encMsg.iv
-            })
+            body: JSON.stringify(payload)
           });
 
           // Малюємо в себе на екрані
           const div = document.createElement("div");
           div.classList.add("message", "my-message");
-          div.innerHTML = `<strong>Я:</strong> ${escapeHTML(content)}`;
+          if (content) div.innerHTML = `<strong>Я:</strong> ${escapeHTML(content)}`;
+
+          if (file) {
+            const url = URL.createObjectURL(file);
+            if (file.type.startsWith("image/")) {
+              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+            } else {
+              const a = document.createElement("a"); a.href = url; a.download = file.name; a.textContent = "Завантажити файл"; div.appendChild(a);
+            }
+          }
+
           document.getElementById("messages").appendChild(div);
           scrollToBottom();
-          input.value = "";
+          input.value = ""; mediaInput.value = "";
         } catch (err) { console.error("Помилка відправки в групу", err); }
 
-        return; // Зупиняємо скрипт, щоб не спрацювала логіка приватного чату
-      }
-      // КІНЕЦЬ ЛОГІКИ ГРУПИ (далі йде старий код приватного чату)
-
-      if (file && file.size > 7 * 1024 * 1024) {
-        alert("❌ Файл занадто великий! Максимальний розмір — 7 МБ.");
         return;
       }
+      // КІНЕЦЬ ЛОГІКИ ГРУПИ (далі йде старий код приватного чату)
 
       if (!receiver) {
         alert("❌ Виберіть контакт");
@@ -565,104 +576,64 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       try {
-        // 1) Отримуємо спільний ключ
-        const sharedKey = await getSharedKey(receiver);
-
-        // 2) Формуємо payload
-        let payload = { receiver, reply_to: replyInput.value || null };
-
-        // — текст (якщо є)
-        if (content) {
-          const encMsg = await encrypt(content, sharedKey);
-          payload.content_for_sender = encMsg.data;
-          payload.iv_for_sender = encMsg.iv;
-          payload.content_for_receiver = encMsg.data;
-          payload.iv_for_receiver = encMsg.iv;
-        } else {
-          payload.content_for_sender = null;
-          payload.iv_for_sender  = null;
-          payload.content_for_receiver = null;
-          payload.iv_for_receiver = null;
-        }
-
-        // — файл (якщо є)
-        if (file) {
-          const buf = await file.arrayBuffer();
-          const encBuf= await encryptArrayBuffer(buf, sharedKey);
-          payload.media_type = file.type;
-          payload.media_content_for_sender = encBuf.data;
-          payload.iv_media_for_sender = encBuf.iv;
-          payload.media_content_for_receiver = encBuf.data;
-          payload.iv_media_for_receiver = encBuf.iv;
-        } else {
-          payload.media_type = null;
-          payload.media_content_for_sender = null;
-          payload.iv_media_for_sender = null;
-          payload.media_content_for_receiver = null;
-          payload.iv_media_for_receiver = null;
-        }
-
-        // 3) Надсилаємо на сервер
-        const res = await fetch("/api/send_message", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": csrfToken
-          },
-          body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          alert("❌ " + err.error);
+        // 1) Отримуємо ВСІ ключі отримувача і СВОЇ ключі
+        const recKeys = await getSharedKeysForUser(receiver);
+        const myKeys = await getSharedKeysForUser(currentUser);
+        // ДОДАНО: Перевірка наявності ключів
+        if (recKeys.length === 0) {
+          alert(`❌ Користувач ${receiver} ще не авторизувався на жодному пристрої (немає ключів).`);
           return;
         }
+        if (myKeys.length === 0) {
+          alert(`❌ Ваших ключів немає на сервері. Перезавантажте сторінку.`);
+          return;
+        }
+        let payload = { receiver, reply_to: replyInput.value || null };
 
-        // 4) Відображаємо своє повідомлення
-        const div = document.createElement("div");
-        div.classList.add("message", "my-message");
-
-        // — відображаємо текст
+        // — текст
         if (content) {
-          const text = await decrypt(
-            { iv: payload.iv_for_sender, data: payload.content_for_sender },
-            sharedKey
-          );
+          const encRec = await encryptFanOut(content, recKeys);
+          const encSen = await encryptFanOut(content, myKeys);
+          payload.content_for_receiver = encRec.data; payload.iv_for_receiver = encRec.iv;
+          payload.content_for_sender = encSen.data; payload.iv_for_sender = encSen.iv;
+        } else {
+          payload.content_for_sender = null; payload.iv_for_sender = null;
+          payload.content_for_receiver = null; payload.iv_for_receiver = null;
+        }
+
+        // — файл
+        if (file) {
+          const buf = await file.arrayBuffer();
+          const encRecBuf = await encryptArrayBufferFanOut(buf, recKeys);
+          const encSenBuf = await encryptArrayBufferFanOut(buf, myKeys);
+          payload.media_type = verifiedMediaType;
+          payload.media_content_for_receiver = encRecBuf.data; payload.iv_media_for_receiver = encRecBuf.iv;
+          payload.media_content_for_sender = encSenBuf.data; payload.iv_media_for_sender = encSenBuf.iv;
+        } else {
+          payload.media_type = null; payload.media_content_for_sender = null; payload.iv_media_for_sender = null;
+          payload.media_content_for_receiver = null; payload.iv_media_for_receiver = null;
+        }
+
+        const res = await fetch("/api/send_message", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken }, body: JSON.stringify(payload) });
+        if (!res.ok) { const err = await res.json(); alert("❌ " + err.error); return; }
+
+        const div = document.createElement("div"); div.classList.add("message", "my-message");
+        if (content) {
+          const text = await decryptFanOut(payload.iv_for_sender, payload.content_for_sender, currentUser);
           div.innerHTML = `<strong>Я:</strong> ${escapeHTML(text)}`;
         }
-
-        // — відображаємо файл/картинку
         if (file) {
-          const blob = await decryptToBlob(
-            { iv: payload.iv_media_for_sender, data: payload.media_content_for_sender },
-            sharedKey,
-            payload.media_type
-          );
+          const blob = await decryptToBlobFanOut(payload.iv_media_for_sender, payload.media_content_for_sender, currentUser, payload.media_type);
           const url = URL.createObjectURL(blob);
           if (payload.media_type.startsWith("image/")) {
-            const img = document.createElement("img");
-            img.src = url;
-            img.style.maxWidth = "200px";
-            div.appendChild(img);
+            const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
           } else {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `file_${Date.now()}`;
-            a.textContent = "Завантажити файл";
-            div.appendChild(a);
+            const a = document.createElement("a"); a.href = url; a.download = `file_${Date.now()}`; a.textContent = "Завантажити файл"; div.appendChild(a);
           }
         }
-
-        document.getElementById("messages").appendChild(div);
-        scrollToBottom();
-
-        // 5) Очищаємо форму
-        input.value = "";
-        replyInput.value = "";
-        mediaInput.value = "";
-      } catch (err) {
-        console.error(err);
-        alert("❌ Помилка відправки");
-      }
+        document.getElementById("messages").appendChild(div); scrollToBottom();
+        input.value = ""; replyInput.value = ""; mediaInput.value = "";
+      } catch (err) { console.error(err); alert("❌ Помилка відправки"); }
     });
   }
 
@@ -685,48 +656,69 @@ document.addEventListener("DOMContentLoaded", async () => {
       const chatUsername = document.getElementById("chat-username")?.textContent;
       if (chatUsername === data.sender) {
         let msgText = "[Неможливо прочитати]";
-        if (data.iv && data.iv !== "no_iv_for_media") {
-          const key = await getSharedKey(data.sender);
-          msgText = await decrypt({ iv: data.iv, data: data.content }, key);
-        } else {
-          msgText = data.content;
-        }
-        const div = document.createElement("div");
-        div.classList.add("message", "other-message");
-        div.innerHTML = `<strong>${escapeHTML(data.sender)}</strong>: ` + `${escapeHTML(msgText)}`;
+        if (data.iv && data.content) {
+          try { msgText = await decryptFanOut(data.iv, data.content, data.sender); } catch(e){}
+        } else msgText = data.content;
+
+        const div = document.createElement("div"); div.classList.add("message", "other-message");
+        div.innerHTML = `<strong>${escapeHTML(data.sender)}</strong>: ${escapeHTML(msgText)}`;
+
         if (data.media_content && data.iv_media) {
           try {
-            const blob = await decryptToBlob(
-              { iv: data.iv_media, data: data.media_content },
-              await getSharedKey(data.sender),
-              data.media_type
-            );
+            const blob = await decryptToBlobFanOut(data.iv_media, data.media_content, data.sender, data.media_type);
             const url = URL.createObjectURL(blob);
             if (data.media_type.startsWith("image/")) {
-              const img = document.createElement("img");
-              img.src = url; img.style.maxWidth = "200px";
-              div.appendChild(img);
+              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
             } else {
-              const a = document.createElement("a");
-              a.href = url; a.download = `file_from_${data.sender}`;
-              a.textContent = "Завантажити файл";
-              div.appendChild(a);
+              const a = document.createElement("a"); a.href = url; a.download = `file_${Date.now()}`; a.textContent = "Завантажити файл"; div.appendChild(a);
             }
-          } catch (err) {
-            console.warn("Не вдалось дешифрувати медіа в real-time:", err);
-          }
+          } catch (err) {}
         }
-        document.getElementById("messages").appendChild(div);
-        scrollToBottom();
+        document.getElementById("messages").appendChild(div); scrollToBottom();
       } else {
-        document.querySelectorAll("#contacts li").forEach(li => {
-          if (li.innerText === data.sender) li.style.backgroundColor = "#ffd8d8";
-        });
+        document.querySelectorAll("#contacts li").forEach(li => { if (li.innerText === data.sender) li.style.backgroundColor = "#ffd8d8"; });
       }
     });
+
+    socket.on("new_group_message", async data => {
+      if (currentActiveGroup === data.group_id && data.sender !== currentUser) {
+        const div = document.createElement("div");
+        div.classList.add("message", "other-message");
+
+        try {
+          // Текст
+          if (data.content && data.iv) {
+            const text = await decryptDirect({ iv: data.iv, data: data.content }, currentGroupKey);
+            div.innerHTML = `<strong>${escapeHTML(data.sender)}:</strong> ${escapeHTML(text)}`;
+          } else {
+            div.innerHTML = `<strong>${escapeHTML(data.sender)}:</strong>`;
+          }
+
+          // Медіа (Real-time)
+          if (data.media_content && data.iv_media) {
+            const iv = Uint8Array.from(atob(data.iv_media), c => c.charCodeAt(0));
+            const dat = Uint8Array.from(atob(data.media_content), c => c.charCodeAt(0));
+            const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, currentGroupKey, dat);
+
+            const blob = new Blob([decrypted], { type: data.media_type });
+            const url = URL.createObjectURL(blob);
+            if (data.media_type.startsWith("image/")) {
+              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+            } else {
+              const a = document.createElement("a"); a.href = url; a.download = "file"; a.textContent = "Завантажити файл"; div.appendChild(a);
+            }
+          }
+
+          document.getElementById("messages").appendChild(div);
+          scrollToBottom();
+        } catch(e) { console.error("Помилка дешифрування групи", e); }
+      }
+    });
+
     socket.on("user_online", data => console.log(`🟢 ${data.username} онлайн`));
     socket.on("user_offline", data => console.log(`🔴 ${data.username} офлайн`));
   }
+
   // ===== Обробник скролу для завантаження історії =====
   const messagesContainer = document.getElementById("messages");
   if (messagesContainer) {
@@ -747,138 +739,116 @@ document.addEventListener("DOMContentLoaded", async () => {
   let currentGroupKey = null;
 
   function loadGroups() {
-    fetch("/api/groups")
-      .then(r => r.json())
-      .then(data => {
-        const ul = document.getElementById("groups");
-        if (!ul) return;
-        ul.innerHTML = "";
-        (data.groups || []).forEach(g => {
-          const li = document.createElement("li");
-          li.innerHTML = `👥 <strong>${g.name}</strong>`;
-          li.style.cursor = "pointer";
-          li.addEventListener("click", () => openGroupChat(g.id, g.name, g.creator));
-          ul.appendChild(li);
-        });
+    fetch("/api/groups").then(r => r.json()).then(data => {
+      const ul = document.getElementById("groups");
+      if (!ul) return; ul.innerHTML = "";
+      (data.groups || []).forEach(g => {
+        const li = document.createElement("li"); li.innerHTML = `👥 <strong>${g.name}</strong>`;
+        li.style.cursor = "pointer"; li.addEventListener("click", () => openGroupChat(g.id, g.name, g.creator)); ul.appendChild(li);
       });
+    });
   }
-  loadGroups(); // Викликаємо при старті
+  loadGroups();
 
-  // 2. Створення групи (Генерація AES ключа)
   const createGroupForm = document.getElementById("create-group-form");
   if (createGroupForm) {
     createGroupForm.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const groupName = document.getElementById("group-name").value.trim();
-      const select = document.getElementById("group-members-select");
-      const selectedMembers = Array.from(select.selectedOptions).map(opt => opt.value);
-
+      const groupName = document.getElementById("group-name").value.trim(), select = document.getElementById("group-members-select"), selectedMembers = Array.from(select.selectedOptions).map(opt => opt.value);
       if (!groupName || selectedMembers.length === 0) {
         alert("Введіть назву та оберіть хоча б одного учасника!"); return;
       }
-      selectedMembers.push(currentUser); // Додаємо себе
-
+      selectedMembers.push(currentUser);
       try {
-        // Створюємо ОДИН ключ для кімнати
-        const groupKeyCrypto = await crypto.subtle.generateKey(
-          { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
-        );
+        const groupKeyCrypto = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
         const groupKeyRaw = await crypto.subtle.exportKey("raw", groupKeyCrypto);
-
-        // Шифруємо цей ключ персонально для кожного учасника
         const membersData = [];
         for (const member of selectedMembers) {
-          const sharedKey = await getSharedKey(member); // Наш спільний ключ з учасником
-          const encGroupKey = await encryptArrayBuffer(groupKeyRaw, sharedKey);
-          membersData.push({
-            username: member,
-            encrypted_key: JSON.stringify({ iv: encGroupKey.iv, data: encGroupKey.data })
-          });
+          const sharedKeys = await getSharedKeysForUser(member);
+          const encGroupKey = await encryptArrayBufferFanOut(groupKeyRaw, sharedKeys);
+          membersData.push({ username: member, encrypted_key: JSON.stringify({ iv: encGroupKey.iv, data: encGroupKey.data }) });
         }
-
-        // Відправляємо зашифровані ключі на сервер
-        const res = await fetch("/api/groups/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-          body: JSON.stringify({ name: groupName, members: membersData })
-        });
-
-        if (res.ok) {
-          alert("✅ Групу створено!");
-          document.getElementById("group-name").value = "";
-          loadGroups();
-        } else { alert("❌ Помилка створення"); }
-      } catch (err) { console.error(err); alert("❌ Помилка криптографії"); }
+        const res = await fetch("/api/groups/create", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken }, body: JSON.stringify({ name: groupName, members: membersData }) });
+        if (res.ok) { alert("✅ Групу створено!"); document.getElementById("group-name").value = ""; loadGroups(); }
+      } catch (err) { console.error(err); alert("❌ Помилка створення"); }
     });
   }
 
-  // 3. Відкриття групи (Розшифрування ключа та історії)
   async function openGroupChat(groupId, groupName, creatorUsername) {
-    currentActiveContact = null; // Вимикаємо приватний чат
-    currentActiveGroup = groupId;
-    document.getElementById("chat-username").textContent = `${groupName} (Група)`;
-    document.getElementById("chat-window").classList.remove("hidden");
-    const messagesDiv = document.getElementById("messages");
-    messagesDiv.innerHTML = "<i>Розшифрування ключа кімнати...</i>";
+    const leaveBtn = document.getElementById("leave-group-btn");
+    leaveBtn.classList.remove("hidden");
+    leaveBtn.onclick = async () => {
+      if (!confirm(`Ви впевнені, що хочете вийти з групи "${groupName}"?`)) return;
+      await fetch("/api/groups/leave", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+        body: JSON.stringify({ group_id: groupId })
+      });
 
+      document.getElementById("chat-window").classList.add("hidden");
+      currentActiveGroup = null;
+      currentGroupKey = null;
+
+      loadGroups();
+    };
+    currentActiveContact = null; currentActiveGroup = groupId;
+    document.getElementById("chat-username").textContent = `${groupName} (Група)`; document.getElementById("chat-window").classList.remove("hidden");
+    const messagesDiv = document.getElementById("messages"); messagesDiv.innerHTML = "<i>Розшифрування ключа кімнати...</i>";
     try {
-      // Завантажуємо свій екземпляр ключа групи з БД
       const res = await fetch(`/api/groups/${groupId}/key`);
-      const data = await res.json();
-      const encData = JSON.parse(data.encrypted_key);
-
-      // Отримуємо спільний ключ з ТВОРЦЕМ групи (бо він зашифрував цей ключ для нас)
-      const sharedWithCreator = await getSharedKey(creatorUsername);
-
-      // Розшифровуємо ключ групи
-      const decryptedKeyRaw = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: Uint8Array.from(atob(encData.iv), c => c.charCodeAt(0)) },
-        sharedWithCreator,
-        Uint8Array.from(atob(encData.data), c => c.charCodeAt(0))
-      );
-
-      currentGroupKey = await crypto.subtle.importKey(
-        "raw", decryptedKeyRaw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]
-      );
-
-      // Підключаємось до кімнати в сокетах
+      const data = await res.json(); const encData = JSON.parse(data.encrypted_key);
+      const decryptedKeyRaw = await decryptFanOutBase(encData.iv, encData.data, creatorUsername, true);
+      currentGroupKey = await crypto.subtle.importKey("raw", decryptedKeyRaw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
       if (window.socket) window.socket.emit("join_group", { group_id: groupId });
 
-      // Завантажуємо історію повідомлень
       const histRes = await fetch(`/api/groups/messages?group_id=${groupId}&limit=50`);
-      const histData = await histRes.json();
-      messagesDiv.innerHTML = "";
-
+      const histData = await histRes.json(); messagesDiv.innerHTML = "";
       for (const msg of histData.messages || []) {
-        const text = await decrypt({ iv: msg.iv, data: msg.content }, currentGroupKey);
-        const isMe = msg.sender_username === currentUser;
         const div = document.createElement("div");
+        const isMe = msg.sender_username === currentUser;
         div.classList.add("message", isMe ? "my-message" : "other-message");
-        div.innerHTML = `<strong>${isMe ? "Я" : escapeHTML(msg.sender_username)}:</strong> ${escapeHTML(text)}`;
+
+        // 1. Розшифровуємо ТЕКСТ (якщо він є)
+        if (msg.content && msg.iv) {
+          try {
+            const text = await decryptDirect({ iv: msg.iv, data: msg.content }, currentGroupKey);
+            div.innerHTML = `<strong>${isMe ? "Я" : escapeHTML(msg.sender_username)}:</strong> ${escapeHTML(text)}`;
+          } catch(e) {
+            div.innerHTML = `<strong>${escapeHTML(msg.sender_username)}:</strong> [Помилка тексту]`;
+          }
+        } else {
+            div.innerHTML = `<strong>${isMe ? "Я" : escapeHTML(msg.sender_username)}:</strong>`;
+        }
+
+        // 2. Розшифровуємо МЕДІА (якщо воно є)
+        if (msg.media_content && msg.iv_media) {
+          try {
+            const iv = Uint8Array.from(atob(msg.iv_media), c => c.charCodeAt(0));
+            const data = Uint8Array.from(atob(msg.media_content), c => c.charCodeAt(0));
+            const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, currentGroupKey, data);
+
+            const blob = new Blob([decrypted], { type: msg.media_type });
+            const url = URL.createObjectURL(blob);
+
+            if (msg.media_type.startsWith("image/")) {
+              const img = document.createElement("img");
+              img.src = url;
+              img.style.maxWidth = "200px";
+              img.style.display = "block";
+              div.appendChild(img);
+            } else {
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${msg.id}`;
+              a.textContent = "📎 Завантажити файл";
+              a.style.display = "block";
+              div.appendChild(a);
+            }
+          } catch (err) { console.warn("Помилка медіа в групі", err); }
+        }
         messagesDiv.appendChild(div);
       }
       scrollToBottom();
-
-    } catch (err) {
-      console.error(err);
-      messagesDiv.innerHTML = "❌ Помилка доступу до групи.";
-    }
-  }
-
-  // 4. Слухач групових повідомлень (Real-Time)
-  if (typeof socket !== 'undefined') {
-    socket.on("new_group_message", async data => {
-      if (currentActiveGroup === data.group_id && data.sender !== currentUser) {
-        try {
-          const text = await decrypt({ iv: data.iv, data: data.content }, currentGroupKey);
-          const div = document.createElement("div");
-          div.classList.add("message", "other-message");
-          div.innerHTML = `<strong>${escapeHTML(data.sender)}:</strong> ${escapeHTML(text)}`;
-          document.getElementById("messages").appendChild(div);
-          scrollToBottom();
-        } catch(e) { console.error("Помилка розшифрування", e); }
-      }
-    });
+    } catch (err) { console.error(err); messagesDiv.innerHTML = "❌ Помилка доступу до групи."; }
   }
 
   // ====================================================
@@ -923,7 +893,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // 2. Функція показу профілю
+ // 2. Функція показу профілю (Оновлена з видаленням)
   async function showUserProfile(username) {
     try {
       const res = await fetch(`/api/user/${username}/info`);
@@ -934,25 +904,51 @@ document.addEventListener("DOMContentLoaded", async () => {
         document.getElementById("modal-email").textContent = info.email || "Приховано";
         document.getElementById("modal-phone").textContent = info.phone || "Приховано";
 
-        // Кнопка "Написати"
         const msgBtn = document.getElementById("modal-msg-btn");
+        const deleteBtn = document.getElementById("modal-delete-btn");
+
+        // Перевіряємо, чи є юзер у нас в контактах зараз
+        const isContact = Array.from(document.querySelectorAll("#contacts li")).some(li => li.textContent === info.username);
+
         if (info.username === currentUser) {
-          msgBtn.style.display = "none"; // Самому собі писати не можна
+          msgBtn.style.display = "none";
+          deleteBtn.style.display = "none";
         } else {
           msgBtn.style.display = "block";
+
+          // Якщо він наш контакт — показуємо кнопку видалення
+          if (isContact) {
+             deleteBtn.classList.remove("hidden");
+             deleteBtn.style.display = "block";
+          } else {
+             deleteBtn.classList.add("hidden");
+             deleteBtn.style.display = "none";
+          }
+
           msgBtn.onclick = async () => {
             userInfoModal.classList.add("hidden");
-
-            // МАГІЯ: Автоматично додаємо людину в друзі (взаємно) перед відкриттям чату
             await fetch("/api/add_contact", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+              method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
               body: JSON.stringify({ username: info.username })
             });
-            loadContacts(); // Оновлюємо ліве меню
-
-            // Відкриваємо приватний чат
+            loadContacts();
             openChat(info.username);
+          };
+
+          // Логіка видалення
+          deleteBtn.onclick = async () => {
+            if (!confirm(`Ви точно хочете видалити ${info.username} з контактів? Ця дія взаємна.`)) return;
+            userInfoModal.classList.add("hidden");
+            await fetch("/api/remove_contact", {
+              method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+              body: JSON.stringify({ username: info.username })
+            });
+            loadContacts(); // Оновлюємо список
+
+            // Якщо чат з ним зараз відкритий — закриваємо його
+            if (currentActiveContact === info.username) {
+               document.getElementById("chat-window").classList.add("hidden");
+            }
           };
         }
 
@@ -960,5 +956,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } catch (err) { console.error("Помилка завантаження профілю", err); }
   }
-
+// ===== ЗАКРИТТЯ МОДАЛЬНИХ ВІКОН =====
+  document.querySelectorAll('.close-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      // Знаходимо найближчий батьківський елемент з класом 'modal' і ховаємо його
+      this.closest('.modal').classList.add('hidden');
+    });
+  });
 });

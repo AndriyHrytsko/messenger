@@ -4,6 +4,18 @@ def create_tables(db_name="messenger.db"):
     with sqlite3.connect(db_name) as conn:
         cur = conn.cursor()
 
+        # --- DEVICE KEYS (Мульти-девайс ключі) ---
+        cur.execute("""
+                    CREATE TABLE IF NOT EXISTS device_keys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        session_token TEXT NOT NULL UNIQUE,
+                        public_key TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                    )
+                """)
+
         # --- USERS (Оновлена, чиста таблиця з усіма колонками) ---
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (

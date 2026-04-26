@@ -463,16 +463,29 @@ class DatabaseManager:
             conn.commit()
 
         return raw_token  # Віддаємо чистий, щоб app.py зберіг його в сесію
-# ---------- ключі ----------------------------------------------------
-    def get_public_key(self, username):
-        with self.connect() as conn:
-            row = conn.execute("SELECT public_key FROM users WHERE username=?", (username,)).fetchone()
-            return row[0] if row and row[0] else None
 
-    def set_public_key(self, user_id, pubkey_json):
+    # ---------- MULTI-DEVICE KEYS ----------------------------------------------------
+    def set_device_public_key(self, user_id, session_token, pubkey_json):
+        """Зберігає або оновлює публічний ключ для конкретної сесії (пристрою)"""
         with self.connect() as conn:
-            conn.execute("UPDATE users SET public_key=? WHERE id=?", (pubkey_json, user_id))
+            # Використовуємо ON CONFLICT, щоб оновлювати ключ, якщо для цієї сесії він вже є
+            conn.execute("""
+                INSERT INTO device_keys (user_id, session_token, public_key) 
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_token) DO UPDATE SET public_key = excluded.public_key
+            """, (user_id, session_token, pubkey_json))
             conn.commit()
+
+    def get_user_device_keys(self, username):
+        """Отримує всі публічні ключі з усіх активних пристроїв користувача"""
+        user_id = self.get_user_id(username)
+        if not user_id: return []
+
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT public_key FROM device_keys WHERE user_id = ?", (user_id,))
+            rows = cursor.fetchall()
+            return [row[0] for row in rows if row[0]]
 
     # ==========================================
     # === ГРУПОВІ ЧАТИ (GROUP KEY E2E) =========
@@ -604,3 +617,26 @@ class DatabaseManager:
                     "phone": self.decrypt_pii(user[2])
                 }
             return None
+
+    # ==========================================
+    # === ВИДАЛЕННЯ ДАНИХ (Контакти та Групи) ==
+    # ==========================================
+    def remove_contact(self, user_id, contact_username):
+        """Взаємне видалення користувачів зі списків одне одного"""
+        contact_id = self.get_user_id(contact_username)
+        if not contact_id:
+            return False, "User not found"
+
+        with self.connect() as conn:
+            # Видаляємо Олега від Андрія і Андрія від Олега
+            conn.execute("DELETE FROM contacts WHERE user_id = ? AND contact_id = ?", (user_id, contact_id))
+            conn.execute("DELETE FROM contacts WHERE user_id = ? AND contact_id = ?", (contact_id, user_id))
+            conn.commit()
+            return True, "Contact removed"
+
+    def leave_group(self, user_id, group_id):
+        """Видаляє користувача з учасників групи"""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
+            conn.commit()
+            return True, "Left group"

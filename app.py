@@ -465,14 +465,13 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# Нові маршрути для роботи з публічними ключами
-
+# Нові маршрути для Multi-Device ключів
 import json
 
 
 @app.route('/api/public_key', methods=['POST'])
 def save_public_key():
-    if 'user_id' not in session:
+    if 'user_id' not in session or 'session_token' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json()
@@ -480,41 +479,41 @@ def save_public_key():
         return jsonify({"error": "Invalid JSON payload"}), 400
 
     pub = data.get("public_key")
-
-    # 1. Перевіряємо, чи pub взагалі передали і чи це дійсно словник (dict), а не гігантський рядок
     if not pub or not isinstance(pub, dict):
         return jsonify({"error": "Missing or invalid public key format"}), 400
 
-    # конвертуємо dict у JSON-рядок перед збереженням
     pub_json = json.dumps(pub)
-
-    # 2. Жорсткий ліміт розміру: відхиляємо все, що більше 2048 символів (2 КБ)
     if len(pub_json) > 2048:
-        app.logger.warning(f"Malicious payload size from user_id={session['user_id']}")
-        return jsonify({"error": "Payload Too Large: Public key exceeds maximum allowed size"}), 413
+        return jsonify({"error": "Payload Too Large"}), 413
 
-    app.logger.info(f"[save_public_key] user_id={session['user_id']} pub={pub_json}")
-    db_manager.set_public_key(session["user_id"], pub_json)
-    return jsonify({"message": "Public key saved"}), 200
+    # ДОДАНО: Зберігаємо ключ, прив'язаний до конкретної сесії!
+    # Хешуємо токен браузера, бо в базі він лежить у вигляді хешу (захист сесій)
+    session_hash = hashlib.sha256(session['session_token'].encode()).hexdigest()
+
+    db_manager.set_device_public_key(session["user_id"], session_hash, pub_json)
+    return jsonify({"message": "Device public key saved"}), 200
+
 
 @app.route('/api/public_key/<username>', methods=['GET'])
 def get_public_key(username):
-    # 1) Отримуємо збережений JWK (рядок) з БД
-    pub_json_str = db_manager.get_public_key(username)
-    if not pub_json_str:
-        return jsonify({"status": "error", "message": "Користувача не знайдено"}), 404
+    # ДОДАНО: Тепер ми дістаємо МАСИВ ключів (з усіх пристроїв юзера)
+    keys_json_list = db_manager.get_user_device_keys(username)
 
-    # 2) Парсимо рядок у Python-об’єкт
-    try:
-        pub_jwk = json.loads(pub_json_str)
-    except json.JSONDecodeError:
-        return jsonify({"status": "error", "message": "Невірний формат ключа"}), 500
+    if not keys_json_list:
+        return jsonify({"status": "error", "message": "Користувача або ключів не знайдено"}), 404
 
-    # 3) Віддаємо клієнту як об’єкт у полі data.public_key
+    parsed_keys = []
+    for pub_str in keys_json_list:
+        try:
+            parsed_keys.append(json.loads(pub_str))
+        except json.JSONDecodeError:
+            continue
+
+    # Віддаємо клієнту масив публічних ключів
     return jsonify({
         "status": "ok",
         "data": {
-            "public_key": pub_jwk
+            "public_keys": parsed_keys  # Зверни увагу, тепер це масив public_keys
         }
     }), 200
 
@@ -791,6 +790,35 @@ def handle_disconnect():
         if username in online_users:
             online_users.remove(username)
             emit('user_offline', {'username': username}, broadcast=True)
+
+
+# Маршрути для видалення
+@app.route('/api/remove_contact', methods=['POST'])
+def api_remove_contact():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    contact_username = clean(data.get("username", ""), strip=True)
+
+    success, msg = db_manager.remove_contact(session['user_id'], contact_username)
+    if success:
+        return jsonify({"message": msg}), 200
+    return jsonify({"error": msg}), 400
+
+
+@app.route('/api/groups/leave', methods=['POST'])
+def api_leave_group():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    group_id = data.get('group_id')
+
+    success, msg = db_manager.leave_group(session['user_id'], group_id)
+    if success:
+        return jsonify({"message": msg}), 200
+    return jsonify({"error": msg}), 400
 
 if __name__ == '__main__':
     url = "https://127.0.0.1:5050"
