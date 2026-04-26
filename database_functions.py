@@ -141,11 +141,13 @@ class DatabaseManager:
                     "public_key": user[5]
                 }
             return None
+
     def get_user_by_username(self, username):
         with self.connect() as conn:
             cursor = conn.cursor()
+            # ДОДАНО: витягуємо також email
             cursor.execute(
-                "SELECT id, username, password, phone, two_factor_enabled, public_key FROM users WHERE username = ?",
+                "SELECT id, username, password, phone, two_factor_enabled, public_key, email FROM users WHERE username = ?",
                 (username,)
             )
             user = cursor.fetchone()
@@ -154,9 +156,10 @@ class DatabaseManager:
                     "id": user[0],
                     "username": user[1],
                     "password": user[2],
-                    "phone": self.decrypt_pii(user[3]),  # ⬅️ Розшифровуємо телефон
+                    "phone": self.decrypt_pii(user[3]),
                     "two_factor_enabled": user[4],
-                    "public_key": user[5]
+                    "public_key": user[5],
+                    "email": self.decrypt_pii(user[6]) if user[6] else ""
                 }
             return None
 

@@ -1,38 +1,76 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Профіль</title>
-    <link rel="stylesheet" href="/static/styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Профіль</title>
+
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/tailwind-config.js" defer></script>
 </head>
-<body>
-    <div class="profile-container">
-        <h2>Ваш профіль</h2>
-        <form id="profile-form" method="POST" action="/update_profile">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label for="username">Ім'я користувача</label>
-            <input type="text" id="username" name="username" value="{{ user[0] if user else '' }}" required>
+<body class="min-h-screen flex items-center justify-center p-4">
 
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" value="{{ user[1] if user else '' }}" required>
+  <div class="w-full max-w-md bg-ink-900 border border-ink-800 rounded-2xl p-8 shadow-2xl">
+    <h2 class="text-2xl font-bold text-center mb-6 tracking-tight">Ваш профіль</h2>
 
-            <label for="phone">Телефон</label>
-            <input type="text" id="phone" name="phone" value="{{ user[2] if user else '' }}" required>
-
-            <button type="submit" class="save-button">Зберегти зміни</button>
-        </form>
-
-        <div class="two-factor-status">
-            {% if user.two_factor_enabled %}
-                <p>Двофакторна автентифікація: <strong>Увімкнена</strong></p>
-                <a href="{{ url_for('disable_two_factor') }}" class="action-button">Вимкнути 2FA</a>
-            {% else %}
-                <p>Двофакторна автентифікація: <strong>Вимкнена</strong></p>
-                <a href="{{ url_for('enable_two_factor') }}" class="action-button">Увімкнути 2FA</a>
-            {% endif %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="mb-6 space-y-2">
+          {% for category, message in messages %}
+            <div class="p-3 rounded-lg text-sm {{ 'bg-red-500/10 text-red-400 border border-red-500/20' if category == 'error' or category == 'danger' else 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' if category == 'success' else 'bg-brand-500/10 text-brand-400 border border-brand-500/20' }}">
+              {{ message }}
+            </div>
+          {% endfor %}
         </div>
-        <a href="/messenger" class="back-button" style="text-decoration: none; display: block; text-align: center; box-sizing: border-box;">Повернутись до месенджера</a>
+      {% endif %}
+    {% endwith %}
+
+    <form id="profile-form" method="POST" action="/update_profile" class="space-y-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div>
+        <label for="username" class="block text-sm font-medium text-ink-400 mb-1">Ім'я користувача</label>
+        <input type="text" id="username" name="username" value="{{ user.username if user else '' }}" required class="field">
+      </div>
+
+      <div>
+        <label for="email" class="block text-sm font-medium text-ink-400 mb-1">Email</label>
+        <input type="email" id="email" name="email" value="{{ user.email if user else '' }}" required class="field">
+      </div>
+
+      <div>
+        <label for="phone" class="block text-sm font-medium text-ink-400 mb-1">Телефон</label>
+        <input type="text" id="phone" name="phone" value="{{ user.phone if user else '' }}" required class="field">
+      </div>
+
+      <button type="submit" class="btn btn-primary w-full mt-4">Зберегти зміни</button>
+    </form>
+
+    <div class="mt-8 pt-6 border-t border-ink-800">
+      <h3 class="text-sm font-medium text-ink-400 mb-4 text-center">Безпека акаунту</h3>
+      {% if user.two_factor_enabled %}
+          <div class="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 mb-4">
+            <span class="text-sm text-emerald-400 font-medium">2FA Увімкнено</span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
+          </div>
+          <a href="{{ url_for('disable_two_factor') }}" class="btn btn-ghost w-full !text-red-400 !border-red-500/30 hover:!bg-red-500/10 hover:!text-red-300">Вимкнути 2FA</a>
+      {% else %}
+          <div class="flex items-center justify-between bg-ink-850 border border-ink-800 rounded-lg p-4 mb-4">
+            <span class="text-sm text-ink-400">2FA Вимкнено</span>
+          </div>
+          <a href="{{ url_for('enable_two_factor') }}" class="btn btn-primary w-full">Увімкнути 2FA</a>
+      {% endif %}
     </div>
+
+    <div class="mt-6 text-center">
+      <a href="/messenger" class="text-sm text-brand-400 hover:text-brand-500 transition-colors">← Повернутись до месенджера</a>
+    </div>
+  </div>
+
 </body>
 </html>

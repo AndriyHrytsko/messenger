@@ -1,87 +1,141 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Месенджер</title>
+
   <link rel="stylesheet" href="/static/styles.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"
-        integrity="sha384-/KNQL8Nu5gCHLqwqfQjA689Hhoqgi2S84SNUxC3roTe4EhJ9AfLkp8QiQcU8AMzI"
-        crossorigin="anonymous" defer></script>
-  <script src="/static/scriptic.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script nonce="{{ csp_nonce() }}">
+    window.tailwind = {
+      config: {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+            colors: {
+              ink: { 950: '#0e1621', 900: '#17212b', 850: '#1c2733', 800: '#202b36', 700: '#2b3844', 600: '#3a4a5c', 500: '#5a6b7d', 400: '#8b98a5', 200: '#e6ebf0' },
+              brand: { 400: '#62a8f0', 500: '#3390ec', 600: '#1c7ad6', 700: '#155fa8' },
+            },
+            boxShadow: { glow: '0 0 0 1px rgba(51,144,236,.35), 0 10px 30px -10px rgba(51,144,236,.5)' }
+          }
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js" defer></script>
+  <script src="/static/scriptic.js" defer></script>
 </head>
-<body>
-  <div id="app" data-user="{{ session['user'] }}" data-user-id="{{ session['user_id'] }}">
-    <header>
-      <div class="header-left"><h1>Месенджер</h1></div>
-      <div class="header-right">
-        <a href="/profile"><div class="avatar">{{ session['user'][0] }}</div></a>
+<body class="h-screen overflow-hidden">
+  <div id="app" data-user="{{ session['user'] }}" data-user-id="{{ session['user_id'] }}" class="flex flex-col h-screen">
+
+    <header class="flex items-center justify-between px-5 h-14 border-b border-ink-800 bg-ink-900/90 backdrop-blur z-10 shrink-0">
+      <div class="header-left flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-400 flex items-center justify-center shadow-glow">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/></svg>
+        </div>
+        <div class="leading-tight">
+          <h1 class="text-base font-semibold tracking-tight">Месенджер</h1>
+          <p class="text-[11px] text-brand-400 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            E2E encrypted
+          </p>
+        </div>
+      </div>
+      <div class="header-right flex items-center gap-3">
+        <a href="/profile" class="group" title="Профіль">
+          <div class="avatar group-hover:scale-105 transition-transform" style="width:36px;height:36px;font-size:14px;">{{ session['user'][0] }}</div>
+        </a>
         <form id="logout-form" action="/logout" method="POST">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" id="logoutButton">Вийти</button>
+          <button type="submit" id="logoutButton" class="btn btn-ghost !py-1.5 !px-3 text-sm">Вийти</button>
         </form>
       </div>
     </header>
 
-    <div class="main-container">
-      <aside id="users-list">
-        <h2>Контакти</h2>
-        <ul id="contacts"></ul>
-        <form id="add-friend-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" id="friend-username" placeholder="Введіть ім’я користувача" required />
-          <button type="submit">Додати</button>
-        </form>
-        <hr style="margin: 15px 0;">
-        <h2>Групи</h2>
-        <ul id="groups"></ul>
-        <form id="create-group-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" id="group-name" placeholder="Назва групи" required style="width: 90%; margin-bottom: 5px;"/>
-          <p style="font-size: 11px; margin: 0 0 5px 0;">Учасники (Ctrl+Клік):</p>
-          <select id="group-members-select" multiple style="width: 100%; height: 60px; margin-bottom: 5px;"></select>
-          <button type="submit" style="width: 100%;">Створити групу</button>
-        </form>
+    <div class="main-container flex flex-1 overflow-hidden">
+      <aside id="users-list" class="w-80 shrink-0 border-r border-ink-800 bg-ink-900/70 flex flex-col">
+        <div class="p-4 overflow-y-auto flex-1">
+          <h2 class="text-[11px] font-semibold tracking-widest text-ink-500 uppercase mb-3 px-1">Контакти</h2>
+          <ul id="contacts" class="mb-3"></ul>
+          <form id="add-friend-form" class="flex gap-2 mb-6">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" id="friend-username" placeholder="Ім’я користувача" required class="field flex-1" />
+            <button type="submit" class="btn btn-primary !px-3" title="Додати">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </form>
+          <div class="h-px bg-ink-800 mb-5"></div>
+          <h2 class="text-[11px] font-semibold tracking-widest text-ink-500 uppercase mb-3 px-1">Групи</h2>
+          <ul id="groups" class="mb-4"></ul>
+          <form id="create-group-form" class="space-y-2 bg-ink-850/80 border border-ink-800 rounded-xl p-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" id="group-name" placeholder="Назва групи" required class="field" />
+            <p class="text-[11px] text-ink-500">Учасники (Ctrl+Клік):</p>
+            <select id="group-members-select" multiple class="field !p-2" style="height:80px;"></select>
+            <button type="submit" class="btn btn-primary w-full">Створити групу</button>
+          </form>
+        </div>
       </aside>
 
-      <section id="chat-window" class="chat-window hidden">
-        <div class="chat-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <h2>Чат з: <span id="chat-username" class="clickable-name" title="Натисніть для деталей" style="cursor: pointer; color: #007bff; text-decoration: underline;"></span></h2>
-          <button id="leave-group-btn" class="hidden" style="background-color: #dc3545; color: white; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer;">🚪 Вийти з групи</button>
+      <div id="empty-state" class="flex-1 flex flex-col items-center justify-center text-center p-10 bg-ink-950/40">
+        <div class="w-20 h-20 rounded-full bg-ink-850 border border-ink-800 flex items-center justify-center mb-5">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <p class="text-base font-medium text-ink-200">Виберіть чат</p>
+        <p class="text-sm text-ink-500 mt-1">Оберіть контакт або групу, щоб почати спілкування</p>
+        <p class="text-xs text-brand-400 mt-4 flex items-center justify-center gap-1">🔒 Усі повідомлення захищені наскрізним шифруванням</p>
+      </div>
+
+      <section id="chat-window" class="chat-window hidden flex-1 flex flex-col bg-ink-950/40">
+        <div class="chat-header flex items-center justify-between px-6 h-14 border-b border-ink-800 bg-ink-900/70 backdrop-blur shrink-0">
+          <h2 class="text-sm font-medium text-ink-400">
+            Чат з:
+            <span id="chat-username" class="clickable-name text-brand-400 font-semibold underline underline-offset-4 decoration-brand-500/40 cursor-pointer ml-1" title="Натисніть для деталей"></span>
+          </h2>
+          <button id="leave-group-btn" class="hidden btn btn-danger !py-1.5 !px-3 text-xs">🚪 Вийти з групи</button>
         </div>
         <div id="fingerprint" class="fingerprint"></div>
         <div id="messages" class="chat-messages"></div>
-        <form id="message-form" class="chat-form">
+        <form id="message-form" class="chat-form flex items-center gap-2 p-4 border-t border-ink-800 bg-ink-900/80 backdrop-blur shrink-0">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" id="reply-to" name="reply_to" value="" />
-          <input type="text" id="message-input" placeholder="Введіть повідомлення" required />
-          <input type="file" id="media-input" accept="*/*" style="display:none" />
-          <button type="button" id="media-button">Прикріпити</button>
-          <button type="submit">Відправити</button>
+          <input type="file" id="media-input" accept="*/*" class="hidden" />
+          <button type="button" id="media-button" class="btn btn-ghost !p-2.5" title="Прикріпити">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="text" id="message-input" placeholder="Введіть повідомлення" required class="field flex-1" autocomplete="off" />
+          <button type="submit" class="btn btn-primary !px-4" title="Відправити">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
+            <span class="hidden sm:inline">Відправити</span>
+          </button>
         </form>
       </section>
     </div>
   </div>
+
   <div id="user-info-modal" class="modal hidden">
     <div class="modal-content">
       <span class="close-btn">&times;</span>
-      <div class="avatar" id="modal-avatar" style="margin: 0 auto 10px auto; width: 60px; height: 60px; font-size: 30px;"></div>
-      <h2 id="modal-username" style="margin-bottom: 5px;"></h2>
-      <p style="color: #555; font-size: 14px;">Email: <span id="modal-email"></span></p>
-      <p style="color: #555; font-size: 14px;">Телефон: <span id="modal-phone"></span></p>
-      <button id="modal-msg-btn" style="margin-top: 15px; width: 100%;">Написати повідомлення</button>
-      <button id="modal-delete-btn" class="hidden" style="margin-top: 10px; width: 100%; background-color: #dc3545; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer;">🗑 Видалити з контактів</button>
+      <div class="avatar" id="modal-avatar" style="margin: 0 auto 12px auto; width: 64px; height: 64px; font-size: 26px;"></div>
+      <h2 id="modal-username" class="mb-1 text-center font-semibold text-lg"></h2>
+      <p class="text-sm text-center text-ink-400">Email: <span id="modal-email" class="text-ink-200"></span></p>
+      <p class="text-sm text-center text-ink-400">Телефон: <span id="modal-phone" class="text-ink-200"></span></p>
+      <button id="modal-msg-btn" class="btn btn-primary w-full mt-4">Написати повідомлення</button>
+      <button id="modal-delete-btn" class="hidden btn btn-danger w-full mt-2">🗑 Видалити з контактів</button>
     </div>
   </div>
 
   <div id="group-members-modal" class="modal hidden">
     <div class="modal-content">
       <span class="close-btn">&times;</span>
-      <h2>Учасники групи</h2>
-      <ul id="modal-group-list" style="list-style: none; padding: 0; max-height: 200px; overflow-y: auto; text-align: left;"></ul>
+      <h2 class="mb-3 text-center font-semibold text-lg text-ink-200">Учасники групи</h2>
+      <ul id="modal-group-list" class="list-none p-0 max-h-52 overflow-y-auto text-left space-y-1"></ul>
     </div>
   </div>
 </body>

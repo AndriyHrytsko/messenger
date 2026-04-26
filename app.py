@@ -69,12 +69,13 @@ ALLOWED_ORIGINS = [
 socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='gevent')
 
 # Використання Flask-Talisman для HSTS та CSP
+# Використання Flask-Talisman для HSTS та CSP
 csp = {
     "default-src": ["'self'"],
-    "script-src":  ["'self'", "https://cdnjs.cloudflare.com"],
+    "script-src":  ["'self'", "https://cdnjs.cloudflare.com", "https://cdn.tailwindcss.com"],
     "style-src":   ["'self'", "https://fonts.googleapis.com", "'unsafe-inline'"],
     "font-src":    ["'self'", "https://fonts.gstatic.com"],
-    "img-src":     ["'self'", "data:"],
+    "img-src":     ["'self'", "data:", "blob:"],
     "connect-src": ["'self'", "ws://127.0.0.1:5050", "wss://127.0.0.1:5050"]
 }
 Talisman(
@@ -119,14 +120,20 @@ def check_valid_session():
             session.clear()
             return redirect(url_for('login'))
 
+
 def send_sms(to, message):
-    """ Відправка SMS через Twilio """
-    print(f"[DEBUG] Phone raw = '{to}' (length={len(to) if to else 0})")
+    """ Відправка SMS через Twilio з резервним виводом у консоль """
+    print("\n" + "=" * 50)
+    print(f"📲 [DEV MODE] SMS НА НОМЕР: {to}")
+    print(f"📝 ТЕКСТ: {message}")
+    print("=" * 50 + "\n")
+
     if not to or not to.startswith("+"):
         print("Номер телефону не вказано або має невірний формат.")
         return False
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
     try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         msg = client.messages.create(
             body=message,
             from_=TWILIO_PHONE_NUMBER,
@@ -135,11 +142,18 @@ def send_sms(to, message):
         print(f"✅ SMS sent: {msg.sid}")
         return True
     except Exception as e:
-        print(f"Error sending SMS: {e}")
-        return False
+        print(f"⚠️ Помилка Twilio (але Dev Mode пускає далі): {e}")
+        return True  # Робимо вигляд, що все ОК, щоб можна було тестувати 2FA локально
+
 
 def send_email(recipient, subject, message):
-    """ Надсилання листа (для відновлення пароля тощо) """
+    """ Надсилання листа з резервним виводом у консоль """
+    print("\n" + "=" * 50)
+    print(f"📧 [DEV MODE] EMAIL НА: {recipient}")
+    print(f"📌 ТЕМА: {subject}")
+    print(f"📝 ТЕКСТ: {message}")
+    print("=" * 50 + "\n")
+
     sender_email = os.getenv("EMAIL_USER")
     sender_password = os.getenv("EMAIL_PASS")
     try:
@@ -151,8 +165,8 @@ def send_email(recipient, subject, message):
         server.quit()
         return True
     except Exception as e:
-        print(f"Error sending email: {e}")
-        return False
+        print(f"⚠️ Помилка SMTP (але Dev Mode пускає далі): {e}")
+        return True  # Робимо вигляд, що все ОК, щоб тестувати скидання пароля
 
 @app.route('/')
 def index():

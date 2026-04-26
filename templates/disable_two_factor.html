@@ -1,19 +1,37 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Вимкнути 2FA</title>
+
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/tailwind-config.js" defer></script>
 </head>
-<body class="auth-page">
-  <div class="auth-container">
-    <h1>Вимкнути двофакторну автентифікацію</h1>
-    <p>Ви впевнені, що хочете вимкнути 2FA?</p>
-    <form method="POST" action="/disable_two_factor">
+<body class="min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-md bg-ink-900 border border-ink-800 rounded-2xl p-8 shadow-2xl text-center">
+    <div class="flex justify-center mb-6">
+      <div class="w-12 h-12 rounded-xl bg-red-500/10 flex items-center justify-center border border-red-500/20">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+      </div>
+    </div>
+
+    <h1 class="text-2xl font-bold mb-3 tracking-tight">Вимкнути 2FA</h1>
+    <p class="text-ink-400 text-sm mb-6">Ви впевнені, що хочете вимкнути двофакторну автентифікацію? Ваш акаунт стане менш захищеним.</p>
+
+    <form method="POST" action="/disable_two_factor" class="space-y-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit">Вимкнути 2FA</button>
+      <button type="submit" class="btn btn-danger w-full">Так, вимкнути</button>
     </form>
+
+    <a href="/profile" class="btn btn-ghost w-full mt-3">Скасувати</a>
   </div>
+
 </body>
 </html>

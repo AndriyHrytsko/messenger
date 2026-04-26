@@ -1,60 +1,75 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Двофакторна автентифікація</title>
+
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/tailwind-config.js" defer></script>
 </head>
-<body class="auth-page">
-  <div class="auth-container">
-    <h1>Двофакторна автентифікація</h1>
-    <p>Введіть код, який був відправлений на ваш номер телефону.</p>
-    <form action="/two_factor" method="POST">
+<body class="min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-md bg-ink-900 border border-ink-800 rounded-2xl p-8 shadow-2xl text-center">
+    <h1 class="text-2xl font-bold mb-3 tracking-tight">Вхід із 2FA</h1>
+    <p class="text-ink-400 text-sm mb-6">Введіть код, який був відправлений на ваш номер телефону.</p>
+
+    <form action="/two_factor" method="POST" class="space-y-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="text" name="code" placeholder="Введіть код" required>
-      <button type="submit">Підтвердити</button>
+      <input type="text" name="code" placeholder="Введіть 6-значний код" required autocomplete="off" class="field text-center tracking-[0.25em] text-lg font-mono">
+      <button type="submit" class="btn btn-primary w-full">Підтвердити</button>
     </form>
-    <!-- Кнопка для повторного надсилання коду з таймером -->
-    <button id="resend-btn" disabled>Надіслати знову (<span id="timer">60</span>)</button>
-    <!-- Кнопка для повернення -->
-    <button onclick="window.history.back()">Назад</button>
+
+    <div class="mt-6 pt-5 border-t border-ink-800">
+      <p class="text-ink-500 text-xs mb-2">Не отримали код?</p>
+      <button id="resend-btn" disabled class="text-brand-400 hover:text-brand-500 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors">Надіслати знову (<span id="timer">60</span>)</button>
+    </div>
+
+    <a href="/login" class="btn btn-ghost w-full mt-4">Повернутись до логіну</a>
   </div>
 
-  <script>
-    // Таймер 60 секунд для кнопки "Надіслати знову"
+  <script nonce="{{ csp_nonce() }}">
     const resendBtn = document.getElementById('resend-btn');
-    const timerSpan = document.getElementById('timer');
     let secondsLeft = 60;
 
     function updateTimer() {
       secondsLeft--;
-      timerSpan.textContent = secondsLeft;
+      const timerSpan = document.getElementById('timer');
+      if(timerSpan) timerSpan.textContent = secondsLeft;
+
       if (secondsLeft <= 0) {
         clearInterval(timerInterval);
         resendBtn.disabled = false;
-        timerSpan.textContent = "0";
+        resendBtn.textContent = "Надіслати знову";
       }
     }
     let timerInterval = setInterval(updateTimer, 1000);
 
     resendBtn.addEventListener('click', function() {
-      // Викликаємо маршрут для повторної відправки коду
+      resendBtn.disabled = true;
+      resendBtn.textContent = "Надсилання...";
       fetch('/resend_two_factor', { method: 'POST' })
         .then(response => {
           if (response.ok) {
-            alert("Код відправлено знову");
-            // Перезавантажуємо таймер
-            resendBtn.disabled = true;
+            alert("✅ Код відправлено знову");
             secondsLeft = 60;
-            timerSpan.textContent = secondsLeft;
+            resendBtn.innerHTML = `Надіслати знову (<span id="timer">60</span>)`;
             timerInterval = setInterval(updateTimer, 1000);
           } else {
-            alert("Помилка при повторному надсиланні коду");
+            alert("❌ Помилка при повторному надсиланні коду");
+            resendBtn.disabled = false;
+            resendBtn.textContent = "Надіслати знову";
           }
         })
         .catch(error => {
           console.error("Помилка:", error);
+          resendBtn.disabled = false;
+          resendBtn.textContent = "Надіслати знову";
         });
     });
   </script>

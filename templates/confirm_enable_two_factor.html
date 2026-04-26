@@ -1,33 +1,47 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Підтвердіть 2FA</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body class="auth-page">
-  <div class="auth-container">
-    <h1>Підтвердіть двофакторну автентифікацію</h1>
-    <p>Введіть код, який був відправлений на ваш номер телефону.</p>
-    <form method="POST" action="/confirm_enable_two_factor">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="text" name="code" placeholder="Введіть код" required>
-      <button type="submit">Підтвердити</button>
-    </form>
-    <hr>
 
-    <p>Не отримали код? Надішліть повторно:</p>
-    <button id="resend-btn" disabled> Надіслати знову (<span id="timer">60</span>)</button>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/tailwind-config.js" defer></script>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-md bg-ink-900 border border-ink-800 rounded-2xl p-8 shadow-2xl text-center">
+    <h1 class="text-2xl font-bold mb-3 tracking-tight">Підтвердіть 2FA</h1>
+    <p class="text-ink-400 text-sm mb-6">Введіть код, який був відправлений на ваш номер телефону.</p>
+
+    <form method="POST" action="/confirm_enable_two_factor" class="space-y-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="text" name="code" placeholder="Введіть 6-значний код" required autocomplete="off" class="field text-center tracking-[0.25em] text-lg font-mono">
+      <button type="submit" class="btn btn-primary w-full">Підтвердити</button>
+    </form>
+
+    <div class="mt-6 pt-5 border-t border-ink-800">
+      <p class="text-ink-500 text-xs mb-2">Не отримали код?</p>
+      <button id="resend-btn" disabled class="text-brand-400 hover:text-brand-500 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors">Надіслати знову (<span id="timer">60</span>)</button>
+    </div>
+
+    <button onclick="window.history.back()" class="btn btn-ghost w-full mt-4">Скасувати</button>
   </div>
-  <script>
+
+  <script nonce="{{ csp_nonce() }}">
     const resendBtn = document.getElementById("resend-btn");
-    const timerSpan = document.getElementById("timer");
     let secondsLeft = 60;
-    // Стартуємо відлік одразу
+
     const updateTimer = () => {
       secondsLeft--;
-      timerSpan.textContent = secondsLeft;
+      const timerSpan = document.getElementById("timer");
+      if(timerSpan) timerSpan.textContent = secondsLeft;
+
       if (secondsLeft <= 0) {
         clearInterval(timerInterval);
         resendBtn.disabled = false;
@@ -40,21 +54,21 @@
       resendBtn.disabled = true;
       resendBtn.textContent = "Надсилання...";
       try {
-        // Викликаємо той самий маршрут, що й при вперше
         const res = await fetch("/enable_two_factor", { method: "POST" });
         if (res.ok) {
-          // скидаємо таймер
           secondsLeft = 60;
-          timerSpan.textContent = secondsLeft;
+          document.getElementById("timer").textContent = secondsLeft;
           resendBtn.innerHTML = `Надіслати знову (<span id="timer">60</span>)`;
           timerInterval = setInterval(updateTimer, 1000);
         } else {
           alert("❌ Не вдалося надіслати код повторно.");
           resendBtn.disabled = false;
+          resendBtn.textContent = "Надіслати знову";
         }
       } catch {
         alert("❌ Помилка при надсиланні коду.");
         resendBtn.disabled = false;
+        resendBtn.textContent = "Надіслати знову";
       }
     });
   </script>
