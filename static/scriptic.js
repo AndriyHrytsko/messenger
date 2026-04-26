@@ -354,6 +354,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         hasMoreMessages = true;
         chatUsername.textContent = username;
         chatWindow.classList.remove("hidden");
+        document.getElementById("empty-state").classList.add("hidden");
         messagesDiv.innerHTML = "";
 
         // Позначити як прочитане тільки при першому відкритті
@@ -785,6 +786,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       document.getElementById("chat-window").classList.add("hidden");
+      document.getElementById("empty-state").classList.remove("hidden");
       currentActiveGroup = null;
       currentGroupKey = null;
 
@@ -792,6 +794,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     };
     currentActiveContact = null; currentActiveGroup = groupId;
     document.getElementById("chat-username").textContent = `${groupName} (Група)`; document.getElementById("chat-window").classList.remove("hidden");
+    document.getElementById("empty-state").classList.add("hidden");
     const messagesDiv = document.getElementById("messages"); messagesDiv.innerHTML = "<i>Розшифрування ключа кімнати...</i>";
     try {
       const res = await fetch(`/api/groups/${groupId}/key`);
@@ -948,6 +951,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             // Якщо чат з ним зараз відкритий — закриваємо його
             if (currentActiveContact === info.username) {
                document.getElementById("chat-window").classList.add("hidden");
+               document.getElementById("empty-state").classList.remove("hidden");
             }
           };
         }
