@@ -53,7 +53,18 @@
     resendBtn.addEventListener('click', function() {
       resendBtn.disabled = true;
       resendBtn.textContent = "Надсилання...";
-      fetch('/resend_two_factor', { method: 'POST' })
+
+      // ДОДАНО: Беремо токен безпеки з форми
+      const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+
+      fetch('/resend_two_factor', {
+        method: 'POST',
+        // ДОДАНО: Передаємо токен у заголовках
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken
+        }
+      })
         .then(response => {
           if (response.ok) {
             alert("✅ Код відправлено знову");

@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timedelta
 import hashlib
 from flask_wtf.csrf import CSRFProtect
+from email.mime.text import MIMEText
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -147,7 +148,7 @@ def send_sms(to, message):
 
 
 def send_email(recipient, subject, message):
-    """ Надсилання листа з резервним виводом у консоль """
+    """ Надсилання листа з підтримкою кирилиці (UTF-8) та резервним виводом у консоль """
     print("\n" + "=" * 50)
     print(f"📧 [DEV MODE] EMAIL НА: {recipient}")
     print(f"📌 ТЕМА: {subject}")
@@ -156,17 +157,27 @@ def send_email(recipient, subject, message):
 
     sender_email = os.getenv("EMAIL_USER")
     sender_password = os.getenv("EMAIL_PASS")
+
+    if not sender_email or not sender_password:
+        print("⚠️ Увага: EMAIL_USER або EMAIL_PASS не налаштовані в .env.")
+        return True  # Dev Mode: пускаємо далі, бо ми вже вивели код у консоль
+
     try:
+        # Загортаємо лист у UTF-8 формат
+        msg = MIMEText(message, 'plain', 'utf-8')
+        msg['Subject'] = subject
+        msg['From'] = sender_email
+        msg['To'] = recipient
+
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(sender_email, sender_password)
-        msg = f"Subject: {subject}\n\n{message}"
-        server.sendmail(sender_email, recipient, msg)
+        server.send_message(msg)  # Відправляємо правильний MIME-об'єкт
         server.quit()
         return True
     except Exception as e:
         print(f"⚠️ Помилка SMTP (але Dev Mode пускає далі): {e}")
-        return True  # Робимо вигляд, що все ОК, щоб тестувати скидання пароля
+        return True  # Dev Mode
 
 @app.route('/')
 def index():
@@ -421,35 +432,54 @@ def forgot_password():
         if user:
             verification_code = secrets.SystemRandom().randint(100000, 999999)
             db_manager.store_verification_code(user['id'], verification_code)
-            send_email(email, "Password Reset Code", f"Your verification code is: {verification_code}")
+
+            # УКРАЇНСЬКИЙ текст листа
+            send_email(email, "Відновлення пароля", f"Ваш код підтвердження: {verification_code}")
 
             # 2. Зберігаємо ID тільки якщо користувач існує
             session['reset_user_id'] = user['id']
 
-        flash("If an account with these credentials exists, a verification code has been sent to the email.", "info")
+        # УКРАЇНСЬКИЙ текст повідомлення на сайті (категорія success зробить його красивим зеленим/синім)
+        flash("Якщо акаунт із такими даними існує, код підтвердження було надіслано на email.", "success")
         return redirect(url_for('verify_code'))
 
     return render_template('forgot_password.html')
+
 
 @app.route('/reset_password', methods=['GET', 'POST'])
 def reset_password():
     """ Скидання пароля після введення вірного коду """
     if 'reset_user_id' not in session:
         return redirect(url_for('forgot_password'))
+
     if request.method == 'POST':
         password = clean(request.form.get('password', ''), strip=True)
         confirm_password = clean(request.form.get('confirm_password', ''), strip=True)
+
         if not password or not confirm_password:
-            flash("Both fields are required.", "error")
+            flash("Всі поля обов'язкові.", "danger")
             return redirect(url_for('reset_password'))
+
         if password != confirm_password:
-            flash("Passwords do not match.", "error")
+            flash("Паролі не співпадають.", "danger")
             return redirect(url_for('reset_password'))
-        db_manager.update_password(session['reset_user_id'], password)
+
+        # ДОДАНО: Перевірка складності пароля (як при реєстрації)
+        if not re.match(r'^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{8,}$', password):
+            flash("Пароль має містити щонайменше 8 символів, велику і малу літери та цифру.", "danger")
+            return redirect(url_for('reset_password'))
+
+        # ДОДАНО: Перевірка, чи пароль не є старим
+        success, msg = db_manager.update_password(session['reset_user_id'], password)
+        if not success:
+            flash(msg, "danger")
+            return redirect(url_for('reset_password'))
+
         db_manager.rotate_session_token(session['reset_user_id'])
-        flash("Password reset successfully. You can now login.", "success")
+        flash("Пароль успішно скинуто. Тепер ви можете увійти.", "success")
         session.pop('reset_user_id', None)
         return redirect(url_for('login'))
+
     return render_template('reset_password.html')
 
 

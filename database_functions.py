@@ -431,11 +431,23 @@ class DatabaseManager:
         return False
 
     def update_password(self, user_id, new_password):
-        hashed_password = generate_password_hash(new_password)
         with self.connect() as conn:
             cursor = conn.cursor()
+
+            # 1. Дістаємо поточний хеш пароля з бази
+            cursor.execute("SELECT password FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                current_hash = row[0]
+                # 2. Перевіряємо, чи збігається новий пароль зі старим
+                if check_password_hash(current_hash, new_password):
+                    return False, "Новий пароль не може співпадати з поточним."
+
+            # 3. Якщо все добре, хешуємо новий і зберігаємо
+            hashed_password = generate_password_hash(new_password)
             cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed_password, user_id))
             conn.commit()
+            return True, "Пароль успішно змінено."
 
     def get_user_by_id(self, user_id):
         with self.connect() as conn:
