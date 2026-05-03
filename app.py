@@ -70,7 +70,6 @@ ALLOWED_ORIGINS = [
 socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='gevent')
 
 # Використання Flask-Talisman для HSTS та CSP
-# Використання Flask-Talisman для HSTS та CSP
 csp = {
     "default-src": ["'self'"],
     "script-src":  ["'self'", "https://cdnjs.cloudflare.com", "https://cdn.tailwindcss.com"],
@@ -90,7 +89,6 @@ Talisman(
     session_cookie_samesite="Lax"
 )
 
-# Дані Twilio з .env
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -557,7 +555,7 @@ def get_public_key(username):
     return jsonify({
         "status": "ok",
         "data": {
-            "public_keys": parsed_keys  # Зверни увагу, тепер це масив public_keys
+            "public_keys": parsed_keys
         }
     }), 200
 
