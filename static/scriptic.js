@@ -440,9 +440,28 @@ document.addEventListener("DOMContentLoaded", async () => {
             const blob = await decryptToBlobFanOut(mediaIv, mediaDat, isMe ? currentUser : msg.sender_username, msg.media_type);
             const url = URL.createObjectURL(blob);
             if (msg.media_type.startsWith("image/")) {
-              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+              const img = document.createElement("img");
+              img.src = url;
+              img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
+              div.appendChild(img);
             } else {
-              const a = document.createElement("a"); a.href = url; a.download = `file_${msg.id}`; a.textContent = "Завантажити файл"; div.appendChild(a);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${Date.now()}`; // Або msg.id, залежить від контексту
+              // Додаємо Tailwind стилі для красивої кнопки
+              a.className = "flex items-center gap-3 mt-2 bg-ink-800 bg-opacity-50 p-3 rounded-lg border border-ink-700 hover:bg-ink-700 transition cursor-pointer no-underline w-max";
+              a.innerHTML = `
+                  <div class="bg-brand-500 bg-opacity-20 p-2 rounded-full text-brand-400">
+                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                      </svg>
+                  </div>
+                  <div>
+                      <span class="text-sm font-medium text-ink-200 block">Зашифрований файл</span>
+                      <span class="text-xs text-ink-500">Натисніть, щоб завантажити</span>
+                  </div>
+              `;
+              div.appendChild(a);
             }
           } catch (err) {}
         }
@@ -461,14 +480,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     finally { isLoadingMessages = false; }
   }
 
-  // ===== Динамічна required-валидація =====
+// ===== Логіка вибору файлу та UI =====
   const messageInput = document.getElementById("message-input");
   const mediaInput   = document.getElementById("media-input");
+  const filePreviewContainer = document.getElementById('filePreviewContainer');
+  const fileNameDisplay = document.getElementById('fileNameDisplay');
+  const clearFileBtn = document.getElementById('clearFileBtn');
 
-  // Якщо обрали файл — текст уже не required, якщо прибрали файл — знову вмикаємо required
-  mediaInput.addEventListener("change", () => {
-    messageInput.required = mediaInput.files.length === 0;
+  // Коли вибрали файл: показуємо прев'ю, прибираємо required з тексту
+  mediaInput.addEventListener("change", function() {
+    messageInput.required = this.files.length === 0;
+
+    if (this.files && this.files.length > 0) {
+      fileNameDisplay.textContent = this.files[0].name;
+      filePreviewContainer.classList.remove('hidden');
+    } else {
+      filePreviewContainer.classList.add('hidden');
+    }
   });
+
+  // Коли передумали (натиснули хрестик)
+  if (clearFileBtn) {
+    clearFileBtn.addEventListener('click', function() {
+      mediaInput.value = ''; // Очищаємо інпут
+      messageInput.required = true;
+      filePreviewContainer.classList.add('hidden');
+    });
+  }
 
 
   // ===== Надсилання повідомлень =====
@@ -552,15 +590,35 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (file) {
             const url = URL.createObjectURL(file);
             if (file.type.startsWith("image/")) {
-              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+              const img = document.createElement("img");
+              img.src = url;
+              img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
+              div.appendChild(img);
             } else {
-              const a = document.createElement("a"); a.href = url; a.download = file.name; a.textContent = "Завантажити файл"; div.appendChild(a);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${Date.now()}`;
+              // Додаємо Tailwind стилі для красивої кнопки
+              a.className = "flex items-center gap-3 mt-2 bg-ink-800 bg-opacity-50 p-3 rounded-lg border border-ink-700 hover:bg-ink-700 transition cursor-pointer no-underline w-max";
+              a.innerHTML = `
+                  <div class="bg-brand-500 bg-opacity-20 p-2 rounded-full text-brand-400">
+                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                      </svg>
+                  </div>
+                  <div>
+                      <span class="text-sm font-medium text-ink-200 block">Зашифрований файл</span>
+                      <span class="text-xs text-ink-500">Натисніть, щоб завантажити</span>
+                  </div>
+              `;
+              div.appendChild(a);
             }
           }
 
           document.getElementById("messages").appendChild(div);
           scrollToBottom();
           input.value = ""; mediaInput.value = "";
+          if (filePreviewContainer) filePreviewContainer.classList.add('hidden');
         } catch (err) { console.error("Помилка відправки в групу", err); }
 
         return;
@@ -627,13 +685,33 @@ document.addEventListener("DOMContentLoaded", async () => {
           const blob = await decryptToBlobFanOut(payload.iv_media_for_sender, payload.media_content_for_sender, currentUser, payload.media_type);
           const url = URL.createObjectURL(blob);
           if (payload.media_type.startsWith("image/")) {
-            const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+            const img = document.createElement("img");
+            img.src = url;
+            img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
+            div.appendChild(img);
           } else {
-            const a = document.createElement("a"); a.href = url; a.download = `file_${Date.now()}`; a.textContent = "Завантажити файл"; div.appendChild(a);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `file_${Date.now()}`;
+            // Додаємо Tailwind стилі для красивої кнопки
+            a.className = "flex items-center gap-3 mt-2 bg-ink-800 bg-opacity-50 p-3 rounded-lg border border-ink-700 hover:bg-ink-700 transition cursor-pointer no-underline w-max";
+            a.innerHTML = `
+                <div class="bg-brand-500 bg-opacity-20 p-2 rounded-full text-brand-400">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                </div>
+                <div>
+                    <span class="text-sm font-medium text-ink-200 block">Зашифрований файл</span>
+                    <span class="text-xs text-ink-500">Натисніть, щоб завантажити</span>
+                </div>
+            `;
+            div.appendChild(a);
           }
         }
         document.getElementById("messages").appendChild(div); scrollToBottom();
         input.value = ""; replyInput.value = ""; mediaInput.value = "";
+        if (filePreviewContainer) filePreviewContainer.classList.add('hidden');
       } catch (err) { console.error(err); alert("❌ Помилка відправки"); }
     });
   }
@@ -669,9 +747,28 @@ document.addEventListener("DOMContentLoaded", async () => {
             const blob = await decryptToBlobFanOut(data.iv_media, data.media_content, data.sender, data.media_type);
             const url = URL.createObjectURL(blob);
             if (data.media_type.startsWith("image/")) {
-              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+              const img = document.createElement("img");
+              img.src = url;
+              img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
+              div.appendChild(img);
             } else {
-              const a = document.createElement("a"); a.href = url; a.download = `file_${Date.now()}`; a.textContent = "Завантажити файл"; div.appendChild(a);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${Date.now()}`;
+              // Додаємо Tailwind стилі для красивої кнопки
+              a.className = "flex items-center gap-3 mt-2 bg-ink-800 bg-opacity-50 p-3 rounded-lg border border-ink-700 hover:bg-ink-700 transition cursor-pointer no-underline w-max";
+              a.innerHTML = `
+                  <div class="bg-brand-500 bg-opacity-20 p-2 rounded-full text-brand-400">
+                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                      </svg>
+                  </div>
+                  <div>
+                      <span class="text-sm font-medium text-ink-200 block">Зашифрований файл</span>
+                      <span class="text-xs text-ink-500">Натисніть, щоб завантажити</span>
+                  </div>
+              `;
+              div.appendChild(a);
             }
           } catch (err) {}
         }
@@ -704,9 +801,28 @@ document.addEventListener("DOMContentLoaded", async () => {
             const blob = new Blob([decrypted], { type: data.media_type });
             const url = URL.createObjectURL(blob);
             if (data.media_type.startsWith("image/")) {
-              const img = document.createElement("img"); img.src = url; img.style.maxWidth = "200px"; div.appendChild(img);
+              const img = document.createElement("img");
+              img.src = url;
+              img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
+              div.appendChild(img);
             } else {
-              const a = document.createElement("a"); a.href = url; a.download = "file"; a.textContent = "Завантажити файл"; div.appendChild(a);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `file_${Date.now()}`;
+              // Додаємо Tailwind стилі для красивої кнопки
+              a.className = "flex items-center gap-3 mt-2 bg-ink-800 bg-opacity-50 p-3 rounded-lg border border-ink-700 hover:bg-ink-700 transition cursor-pointer no-underline w-max";
+              a.innerHTML = `
+                  <div class="bg-brand-500 bg-opacity-20 p-2 rounded-full text-brand-400">
+                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                      </svg>
+                  </div>
+                  <div>
+                      <span class="text-sm font-medium text-ink-200 block">Зашифрований файл</span>
+                      <span class="text-xs text-ink-500">Натисніть, щоб завантажити</span>
+                  </div>
+              `;
+              div.appendChild(a);
             }
           }
 
@@ -835,8 +951,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (msg.media_type.startsWith("image/")) {
               const img = document.createElement("img");
               img.src = url;
-              img.style.maxWidth = "200px";
-              img.style.display = "block";
+              img.className = "mt-2 max-w-[250px] rounded-lg border border-ink-700 shadow-sm";
               div.appendChild(img);
             } else {
               const a = document.createElement("a");
