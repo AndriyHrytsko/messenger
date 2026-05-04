@@ -5,16 +5,21 @@ import os
 from cryptography.fernet import Fernet
 import hashlib
 import hmac
+import hvac
 class DatabaseManager:
     def __init__(self, db_path="messenger.db"):
         self.db_path = db_path
 
-        # Ініціалізація шифрування
-        pii_key = os.getenv("PII_KEY")
+        # Підключаємося до Vault
+        vault_client = hvac.Client(url='http://127.0.0.1:8200', token='hvs.wjjbuQWdG4tBAszWiJP2xbRu')
+        vault_secrets = vault_client.secrets.kv.v2.read_secret_version(path='messenger')['data']['data']
+
+        # Ініціалізація шифрування ключами з Vault
+        pii_key = vault_secrets.get("PII_KEY")
         if not pii_key:
-            raise ValueError("PII_KEY не знайдено в .env!")
+            raise ValueError("PII_KEY не знайдено у Vault!")
         self.cipher = Fernet(pii_key)
-        self.secret_salt = os.getenv("SECRET_KEY", "fallback_salt").encode()
+        self.secret_salt = vault_secrets.get("SECRET_KEY", "fallback_salt").encode()
 
     # --- УТИЛІТИ ДЛЯ PII ---
     def encrypt_pii(self, data):
@@ -311,36 +316,27 @@ class DatabaseManager:
                 "SELECT id FROM users WHERE TRIM(username) = TRIM(?) COLLATE NOCASE",
                 (username,)
             ).fetchone()
-            print(f"🔍 get_user_id('{username}') -> {result}")
             return result[0] if result else None
 
     def add_contact(self, user_id, contact_username):
         contact_username = contact_username.strip()  # Видаляємо зайві пробіли
         contact_id = self.get_user_id(contact_username)
-        print(
-            f"🧐 Перевіряємо користувача: user_id={user_id}, contact_username={contact_username}, contact_id={contact_id}")
         if user_id is None:
-            print("❌ User does not exist")
             return "User does not exist"
         if contact_id is None:
-            print("❌ Contact user does not exist")
             return "Contact user does not exist"
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM contacts WHERE user_id = ? AND contact_id = ?", (user_id, contact_id))
             existing_contact = cursor.fetchone()
-            print("🔍 Існуючий контакт у БД:", existing_contact)
             if existing_contact:
-                print("⚠️ Contact already exists")
                 return "Contact already exists"
 
-            print(f"✅ Додаємо контакт: user_id={user_id}, contact_id={contact_id}")
             # 1. Додаємо Олега до твого списку (без помилок, якщо він вже є)
             cursor.execute("INSERT OR IGNORE INTO contacts (user_id, contact_id) VALUES (?, ?)", (user_id, contact_id))
             # 2. Додаємо тебе до списку Олега (взаємно)
             cursor.execute("INSERT OR IGNORE INTO contacts (user_id, contact_id) VALUES (?, ?)", (contact_id, user_id))
             conn.commit()
-            print("✅ Contact успішно додано (взаємно)")
             return "Contact successfully added"
 
     def get_user_data(self, username):
@@ -371,7 +367,6 @@ class DatabaseManager:
     def get_contacts(self, username):
         user_id = self.get_user_id(username)
         if user_id is None:
-            print("Користувач не знайдений у базі")
             return []
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -381,7 +376,6 @@ class DatabaseManager:
                 WHERE contacts.user_id = ?
             """, (user_id,))
             contacts = cursor.fetchall()
-        print(f"📋 Контакти для {username}: {[c[0] for c in contacts]}")
         return [contact[0] for contact in contacts]
 
     def store_verification_code(self, user_id, code):

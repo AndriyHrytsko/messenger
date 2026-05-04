@@ -1,14 +1,9 @@
 from gevent import monkey
-# Патчимо всі блокувальні модулі (socket, threading тощо), але не торкаємось ssl,
-# щоб запобігти рекурсії всередині urllib3/requests → Twilio :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
 monkey.patch_all()
 
-import os
 import re
 import secrets
-import sqlite3
 import smtplib
-import time
 import logging
 from datetime import datetime, timedelta
 import hashlib
@@ -19,9 +14,8 @@ from flask import (
     Flask, render_template, request, redirect, url_for,
     session, flash, jsonify
 )
-from flask_socketio import SocketIO, emit, join_room, leave_room
-from dotenv import load_dotenv
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask_socketio import SocketIO, emit, join_room
+from werkzeug.security import check_password_hash
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from bleach import clean
@@ -31,15 +25,25 @@ from flask_talisman import Talisman
 from database_functions import DatabaseManager
 from twilio.rest import Client
 
+import hvac
 
 
-load_dotenv()
+
+vault_client = hvac.Client(url='http://127.0.0.1:8200', token='hvs.wjjbuQWdG4tBAszWiJP2xbRu')
+
+vault_secrets = vault_client.secrets.kv.v2.read_secret_version(path='messenger')['data']['data']
 
 app = Flask(__name__)
-secret_key = os.getenv("SECRET_KEY")
+
+secret_key = vault_secrets.get("SECRET_KEY")
 if not secret_key:
-    raise ValueError("КРИТИЧНА ПОМИЛКА: SECRET_KEY не знайдено! Перевірте файл .env.")
+    raise ValueError("КРИТИЧНА ПОМИЛКА: SECRET_KEY не знайдено у Vault!")
 app.secret_key = secret_key
+
+TWILIO_ACCOUNT_SID = vault_secrets.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = vault_secrets.get("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = vault_secrets.get("TWILIO_PHONE_NUMBER")
+
 csrf = CSRFProtect(app)
 # ————— безпечні налаштування кукі —————
 app.config.update(
@@ -89,9 +93,6 @@ Talisman(
     session_cookie_samesite="Lax"
 )
 
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
 db_manager = DatabaseManager()
 online_users = set()
@@ -121,11 +122,6 @@ def check_valid_session():
 
 
 def send_sms(to, message):
-    """ Відправка SMS через Twilio з резервним виводом у консоль """
-    print("\n" + "=" * 50)
-    print(f"📲 [DEV MODE] SMS НА НОМЕР: {to}")
-    print(f"📝 ТЕКСТ: {message}")
-    print("=" * 50 + "\n")
 
     if not to or not to.startswith("+"):
         print("Номер телефону не вказано або має невірний формат.")
@@ -138,7 +134,6 @@ def send_sms(to, message):
             from_=TWILIO_PHONE_NUMBER,
             to=to
         )
-        print(f"✅ SMS sent: {msg.sid}")
         return True
     except Exception as e:
         print(f"⚠️ Помилка Twilio (але Dev Mode пускає далі): {e}")
@@ -146,19 +141,9 @@ def send_sms(to, message):
 
 
 def send_email(recipient, subject, message):
-    """ Надсилання листа з підтримкою кирилиці (UTF-8) та резервним виводом у консоль """
-    print("\n" + "=" * 50)
-    print(f"📧 [DEV MODE] EMAIL НА: {recipient}")
-    print(f"📌 ТЕМА: {subject}")
-    print(f"📝 ТЕКСТ: {message}")
-    print("=" * 50 + "\n")
 
-    sender_email = os.getenv("EMAIL_USER")
-    sender_password = os.getenv("EMAIL_PASS")
-
-    if not sender_email or not sender_password:
-        print("⚠️ Увага: EMAIL_USER або EMAIL_PASS не налаштовані в .env.")
-        return True  # Dev Mode: пускаємо далі, бо ми вже вивели код у консоль
+    sender_email = vault_secrets.get("EMAIL_USER")
+    sender_password = vault_secrets.get("EMAIL_PASS")
 
     try:
         # Загортаємо лист у UTF-8 формат
